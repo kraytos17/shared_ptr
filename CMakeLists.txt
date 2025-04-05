@@ -10,7 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 enable_language(CXX)
 
-add_executable(sp src/main.cpp src/shared_ptr.hpp)
+add_executable(sp src/main.cpp src/sp.hpp src/rc.hpp)
 
 include(CTest)
 enable_testing()
