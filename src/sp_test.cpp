@@ -106,38 +106,38 @@ TEST_CASE(weak_ptr_functionality) {
 //     testing::assert_eq<"actual", "expected">(actual, expected);
 // }
 
-// TEST_CASE(custom_deleter) {
-//     bool deleted = false;
-//     auto deleter = [deleted_ptr = &deleted](int* p) {
-//         std::println("Deleter called");
-//         delete p;
-//         *deleted_ptr = true;
-//     };
+TEST_CASE(custom_deleter) {
+    bool deleted = false;
+    auto deleter = [&](int* p) {
+        std::println("Deleter called");
+        delete p;
+        deleted = true;
+    };
 
-//     {
-//         sp::SharedPtr<int> ptr(sp::from_raw_ptr_with_deleter, new int(42), deleter);
-//         testing::assert_that<"Deleter should not be called before SharedPtr destruction">(!deleted);
-//     }
-//     testing::assert_that<"Custom deleter was not invoked">(deleted);
-// }
+    {
+        sp::SharedPtr<int> ptr(sp::from_raw_ptr_with_deleter, new int(42), deleter);
+        testing::assert_that<"Deleter should not be called before SharedPtr destruction">(!deleted);
+    }
+    testing::assert_that<"Custom deleter was not invoked">(deleted);
+}
 
-// TEST_CASE(array_support) {
-//     static int constructions = 0;
-//     static int destructions = 0;
+TEST_CASE(array_support) {
+    static int constructions = 0;
+    static int destructions = 0;
 
-//     struct Tracked {
-//         Tracked() { constructions++; }
-//         ~Tracked() { destructions++; }
-//     };
+    struct Tracked {
+        Tracked() { constructions++; }
+        ~Tracked() { destructions++; }
+    };
 
-//     constructions = destructions = 0;
-//     {
-//         auto arr = sp::makeSharedArray<Tracked>(5);
-//         testing::assert_eq<"constructions", "5">(constructions, 5);
-//         testing::assert_eq<"destructions", "0">(destructions, 0);
-//     }
-//     testing::assert_eq<"destructions", "5">(destructions, 5);
-// }
+    constructions = destructions = 0;
+    {
+        auto arr = sp::makeSharedArray<Tracked>(5);
+        testing::assert_eq<"constructions", "5">(constructions, 5);
+        testing::assert_eq<"destructions", "0">(destructions, 0);
+    }
+    testing::assert_eq<"destructions", "5">(destructions, 5);
+}
 
 struct Thrower {
     Thrower() {

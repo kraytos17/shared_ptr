@@ -33,7 +33,7 @@ namespace testing {
             }
         }
 
-        template<std::size_t N>
+        template<size_t N>
         struct FixedString {
             char chars[N]{};
             consteval FixedString(const char (&str)[N]) { std::copy_n(str, N, chars); }

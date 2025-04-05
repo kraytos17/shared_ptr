@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <print>
 #include <type_traits>
 #include <typeinfo>
 #include <utility>
@@ -81,7 +82,11 @@ namespace sp {
         constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
             m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
 
-        constexpr void destroyObject() override { m_deleter(m_ptr); }
+        constexpr void destroyObject() override {
+            std::println("ControlBlock<T>::destroyObject()");
+            m_deleter(m_ptr);
+        }
+
         constexpr void* deleter(const std::type_info& type) const noexcept override {
             if (type == typeid(Deleter)) {
                 return const_cast<Deleter*>(&m_deleter);
@@ -178,7 +183,7 @@ namespace sp {
             requires std::convertible_to<U*, element_type*> && std::invocable<Deleter&, U*>
         {
             if (ptr) {
-                using Block = ControlBlockPtr<U, Deleter, Alloc>;
+                using Block = ControlBlockPtr<U, std::decay_t<Deleter>, Alloc>;
                 using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
                 BlockAlloc blockAlloc(alloc);
 
@@ -191,7 +196,7 @@ namespace sp {
 
         constexpr SharedPtr(const SharedPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->strongCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -206,12 +211,11 @@ namespace sp {
                 m_ptr = other.m_ptr;
                 m_ctl = other.m_ctl;
                 if (m_ctl) {
-                    m_ctl->strongCount.fetch_add(1, std::memory_order_relaxed);
+                    m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
                 }
             }
             return *this;
         }
-
 
         SharedPtr& operator=(SharedPtr&& other) noexcept {
             SharedPtr(std::move(other)).swap(*this);
@@ -244,7 +248,7 @@ namespace sp {
 
         constexpr SharedPtr(T* ptr, IControlBlockBase* ctl) noexcept : m_ptr(ptr), m_ctl(ctl) {
             if (m_ctl) {
-                m_ctl->strongCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -324,7 +328,7 @@ namespace sp {
 
         constexpr SharedPtr(const SharedPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->strongCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -382,7 +386,7 @@ namespace sp {
 
         constexpr SharedPtr(element_type* ptr, IControlBlockBase* ctl) noexcept : m_ptr(ptr), m_ctl(ctl) {
             if (m_ctl) {
-                m_ctl->strongCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -404,29 +408,48 @@ namespace sp {
         friend class WeakPtr<element_type>;
     };
 
+    template<typename A, typename Alloc>
+    struct ArrayDeleter {
+        Alloc alloc;
+        size_t size;
+
+        void operator()(A* ptr) {
+            for (size_t i = 0; i < size; ++i) {
+                std::destroy_at(ptr + i);
+            }
+            std::allocator_traits<Alloc>::deallocate(alloc, ptr, size);
+        }
+    };
+
     template<typename T>
     [[nodiscard]] constexpr SharedPtr<T[]> makeSharedArray(size_t size) {
-        using Block = ControlBlockPtr<T[], std::default_delete<T[]>, std::allocator<T>>;
         using Alloc = std::allocator<T>;
+        using Deleter = ArrayDeleter<T, Alloc>;
+        using Block = ControlBlockPtr<T[], Deleter, Alloc>;
 
         Alloc alloc;
         T* ptr = std::allocator_traits<Alloc>::allocate(alloc, size);
         size_t constructed = 0;
+
         try {
             for (; constructed < size; ++constructed) {
                 std::construct_at(ptr + constructed);
             }
 
+            Deleter deleter{alloc, size};
+
             using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
             BlockAlloc blockAlloc(alloc);
             auto* block = blockAlloc.allocate(1);
+
             try {
-                std::construct_at(block, ptr, std::default_delete<T[]>{}, alloc);
+                std::construct_at(block, ptr, deleter, alloc);
                 return SharedPtr<T[]>(ptr, static_cast<IControlBlockBase*>(block));
             } catch (...) {
                 blockAlloc.deallocate(block, 1);
                 throw;
             }
+
         } catch (...) {
             for (size_t i = 0; i < constructed; ++i) {
                 std::destroy_at(ptr + i);
@@ -448,13 +471,13 @@ namespace sp {
             requires std::convertible_to<U*, element_type*>
             : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->weakCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->weakCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->weakCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->weakCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -481,7 +504,7 @@ namespace sp {
                         return {};
                     }
                     if (m_ctl->strongCount.compare_exchange_weak(
-                            count, count + 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                            count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                         result.m_ptr = m_ptr;
                         result.m_ctl = m_ctl;
                         return result;
@@ -533,13 +556,13 @@ namespace sp {
         constexpr WeakPtr() noexcept = default;
         constexpr WeakPtr(const SharedPtr<T[]>& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->weakCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->weakCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
-                m_ctl->weakCount.fetch_add(1, std::memory_order_relaxed);
+                m_ctl->weakCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -567,7 +590,7 @@ namespace sp {
                         break;
                     }
                 } while (!m_ctl->strongCount.compare_exchange_weak(
-                    count, count + 1, std::memory_order_acquire, std::memory_order_relaxed));
+                    count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed));
 
                 if (count != 0) {
                     result.m_ptr = m_ptr;
