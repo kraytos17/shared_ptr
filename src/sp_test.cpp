@@ -1,10 +1,14 @@
 #include "sp.hpp"
 #include <atomic>
+#include <barrier>
 #include <functional>
 #include <memory>
-// #include <thread>
+#include <ranges>
+#include <thread>
 #include <vector>
 #include "utils.hpp"
+
+namespace views = std::views;
 
 // ==================== TEST IMPLEMENTATION ====================
 
@@ -99,32 +103,41 @@ TEST_CASE(zero_size_array) {
     testing::assert_eq<"Refcount should be 0", "0">(arr.strongCount(), 0);
 }
 
-// TEST_CASE(thread_safety) {
-//     constexpr int kThreads = 10;
-//     constexpr int kIterations = 1000;
+TEST_CASE(thread_safety) {
+    constexpr int kThreads = 10;
+    constexpr int kIterations = 1000;
 
-//     auto shared = sp::makeShared<std::atomic_int>(0);
-//     std::vector<std::jthread> threads;
-//     for (int i = 0; i < kThreads; ++i) {
-//         threads.emplace_back([&] {
-//             for (int j = 0; j < kIterations; ++j) {
-//                 auto local_copy = shared;
-//                 local_copy->fetch_add(1, std::memory_order_relaxed);
-//                 sp::WeakPtr<std::atomic_int> weak(shared);
-//                 if (auto locked = weak.lock()) {
-//                     locked->fetch_add(1, std::memory_order_relaxed);
-//                 }
-//             }
-//         });
-//     }
+    auto shared = sp::makeShared<std::atomic_int>(0);
+    std::barrier sync_point(kThreads + 1);
+    std::vector<std::jthread> threads;
 
-//     int actual = shared->load(std::memory_order_relaxed);
-//     int expected = kThreads * kIterations * 2;
+    for (auto _: views::iota(0, kThreads)) {
+        threads.emplace_back([&] {
+            for (auto _: views::iota(0, kIterations)) {
+                auto local_copy = shared;
+                local_copy->fetch_add(1, std::memory_order_relaxed);
+                sp::WeakPtr<std::atomic_int> weak(shared);
+                if (auto locked = weak.lock()) {
+                    locked->fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            sync_point.arrive_and_wait();
+        });
+    }
 
-//     testing::assert_that<"Unexpected counter value">(
-//         actual == expected, testing::detail::format_value(std::format("Expected {}, got {}", expected, actual)));
-//     testing::assert_eq<"actual", "expected">(actual, expected);
-// }
+    sync_point.arrive_and_wait();
+    int actual = shared->load(std::memory_order_seq_cst);
+    int expected = kThreads * kIterations * 2;
+    testing::assert_that<"Counter should reach expected value">(
+      actual == expected,
+      std::format("Expected {} ({} threads * {} iterations * 2 ops), got {}",
+                  expected,
+                  kThreads,
+                  kIterations,
+                  actual));
+
+    testing::assert_eq<"actual", "expected">(actual, expected);
+}
 
 TEST_CASE(custom_deleter) {
     bool deleted = false;
@@ -255,7 +268,8 @@ TEST_CASE(allocator_with_array) {
         auto arr = sp::allocateSharedArray<int>(alloc, 5);
         testing::assert_that<"Should have allocations">(alloc.allocs() > 0);
     }
-    testing::assert_eq<"Deallocations should match", "alloc.allocs()">(alloc.deallocs(), alloc.allocs());
+    testing::assert_eq<"Deallocations should match", "alloc.allocs()">(alloc.deallocs(),
+                                                                       alloc.allocs());
 }
 
 // ==================== TEST RUNNER ====================

@@ -44,8 +44,9 @@ namespace testing {
         };
     } // namespace detail
 
-    [[noreturn]] inline void fail(std::string_view message,
-                                  const std::source_location& loc = std::source_location::current()) {
+    [[noreturn]] inline void
+    fail(std::string_view message,
+         const std::source_location& loc = std::source_location::current()) {
         std::println("\n\033[31mAssertion failed!\033[0m");
         std::println("  Location: {}:{}", loc.file_name(), loc.line());
         std::println("  Function: {}", loc.function_name());
@@ -56,12 +57,14 @@ namespace testing {
     template<detail::FixedString Expr>
     consteval void constexpr_assert(bool condition) {
         if (!condition) {
-            throw std::logic_error(std::format("Compile-time assertion failed: {}", Expr.view()).c_str());
+            throw std::logic_error(
+              std::format("Compile-time assertion failed: {}", Expr.view()).c_str());
         }
     }
 
     template<detail::FixedString Expr>
-    void assert_that(bool condition, const std::source_location& loc = std::source_location::current()) {
+    void assert_that(bool condition,
+                     const std::source_location& loc = std::source_location::current()) {
         if (!condition) {
             fail(std::format("Assertion failed: {}", Expr.view()), loc);
         }
@@ -76,7 +79,8 @@ namespace testing {
     }
 
     template<detail::FixedString LhsExpr, detail::FixedString RhsExpr, typename Lhs, typename Rhs>
-    void assert_eq(Lhs&& lhs, Rhs&& rhs, const std::source_location& loc = std::source_location::current()) {
+    void assert_eq(Lhs&& lhs, Rhs&& rhs,
+                   const std::source_location& loc = std::source_location::current()) {
         if (!(lhs == rhs)) {
             // clang-format off
             fail(std::format("Assertion failed: {} == {}\n  Values: {} != {}",
@@ -89,7 +93,8 @@ namespace testing {
     }
 
     template<detail::FixedString LhsExpr, detail::FixedString RhsExpr, typename Lhs, typename Rhs>
-    void assert_ne(Lhs&& lhs, Rhs&& rhs, const std::source_location& loc = std::source_location::current()) {
+    void assert_ne(Lhs&& lhs, Rhs&& rhs,
+                   const std::source_location& loc = std::source_location::current()) {
         if (!(lhs != rhs)) {
             // clang-format off
             fail(std::format("Assertion failed: {} != {}\n  Both values: {}",
@@ -115,19 +120,19 @@ namespace testing {
     struct TestRegistrar {
         TestRegistrar(const std::source_location& loc = std::source_location::current()) {
             test_registry().emplace_back(
-                Name.view(),
-                [] {
-                    if constexpr (std::is_invocable_v<decltype(Func)>) {
-                        try {
-                            Func();
-                        } catch (const std::exception& e) {
-                            fail(std::format("Test threw exception: {}", e.what()));
-                        } catch (...) {
-                            fail("Test threw unknown exception");
-                        }
-                    }
-                },
-                loc);
+              Name.view(),
+              [] {
+                  if constexpr (std::is_invocable_v<decltype(Func)>) {
+                      try {
+                          Func();
+                      } catch (const std::exception& e) {
+                          fail(std::format("Test threw exception: {}", e.what()));
+                      } catch (...) {
+                          fail("Test threw unknown exception");
+                      }
+                  }
+              },
+              loc);
         }
     };
 

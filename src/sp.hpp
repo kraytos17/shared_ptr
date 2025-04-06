@@ -34,7 +34,8 @@ namespace sp {
         constexpr virtual void* deleter(const std::type_info&) const noexcept = 0;
     };
 
-    template<typename T, typename Deleter = std::default_delete<T>, typename Alloc = std::allocator<T>>
+    template<typename T, typename Deleter = std::default_delete<T>,
+             typename Alloc = std::allocator<T>>
     class ControlBlockDirect : public IControlBlockBase {
     public:
         template<typename... Args>
@@ -55,7 +56,8 @@ namespace sp {
         }
 
         constexpr void destroyBlock() override {
-            using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockDirect>;
+            using BlockAlloc =
+              typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockDirect>;
             BlockAlloc blockAlloc(m_alloc);
             std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
         }
@@ -76,7 +78,8 @@ namespace sp {
         [[no_unique_address]] Alloc m_alloc;
     };
 
-    template<typename T, typename Deleter = std::default_delete<T>, typename Alloc = std::allocator<T>>
+    template<typename T, typename Deleter = std::default_delete<T>,
+             typename Alloc = std::allocator<T>>
     class ControlBlockPtr : public IControlBlockBase {
     public:
         constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
@@ -124,7 +127,8 @@ namespace sp {
 
         constexpr void destroyBlock() override {
             std::println("ControlBlockPtr::destroyBlock() - ptr={}", static_cast<void*>(m_ptr));
-            using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+            using BlockAlloc =
+              typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
             BlockAlloc blockAlloc(m_alloc);
             std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
             std::println("ControlBlockPtr::destroyBlock() - completed");
@@ -157,7 +161,8 @@ namespace sp {
         }
 
         constexpr void destroyBlock() override {
-            using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+            using BlockAlloc =
+              typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
             BlockAlloc blockAlloc(m_alloc);
             std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
         }
@@ -182,7 +187,9 @@ namespace sp {
         template<typename U>
         explicit SharedPtr(from_raw_ptr_tag, U* ptr)
             requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
-            : SharedPtr(from_raw_ptr_with_deleter, ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
+            :
+            SharedPtr(from_raw_ptr_with_deleter, ptr, std::default_delete<U>{},
+                      std::allocator<U>{}) {}
 
         template<typename U, typename Deleter>
         SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d)
@@ -200,7 +207,8 @@ namespace sp {
 
             if (ptr) {
                 using Block = ControlBlockPtr<U, std::remove_cv_t<Deleter>, Alloc>;
-                using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
+                using BlockAlloc =
+                  typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
                 BlockAlloc blockAlloc(alloc);
 
                 std::println("  - allocating control block...");
@@ -231,14 +239,16 @@ namespace sp {
             release();
         }
 
-        constexpr SharedPtr(const SharedPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
+        constexpr SharedPtr(const SharedPtr& other) noexcept :
+            m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
                 m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
         constexpr SharedPtr(SharedPtr&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {}
+            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
+        }
 
         SharedPtr& operator=(const SharedPtr& other) noexcept {
             if (this != &other) {
@@ -292,7 +302,9 @@ namespace sp {
             std::println("SharedPtr::release() - enter");
             if (m_ctl) {
                 auto oldCount = m_ctl->strongCount.fetch_sub(1, std::memory_order_acq_rel);
-                std::println("SharedPtr::release() - strongCount decreased from {} to {}", oldCount, oldCount - 1);
+                std::println("SharedPtr::release() - strongCount decreased from {} to {}",
+                             oldCount,
+                             oldCount - 1);
 
                 if (oldCount == 1) {
                     std::println("SharedPtr::release() - last strong reference, destroying object");
@@ -358,13 +370,15 @@ namespace sp {
         constexpr SharedPtr() noexcept = default;
         constexpr SharedPtr(std::nullptr_t) noexcept {}
 
-        template<typename U, typename Deleter = std::default_delete<U[]>, typename Alloc = std::allocator<U>>
+        template<typename U, typename Deleter = std::default_delete<U[]>,
+                 typename Alloc = std::allocator<U>>
         explicit SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d = {}, Alloc alloc = {})
             requires std::same_as<U, element_type>
         {
             if (ptr) {
                 using Block = ControlBlockPtr<U[], Deleter, Alloc>;
-                using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
+                using BlockAlloc =
+                  typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
                 BlockAlloc blockAlloc(alloc);
 
                 auto* block = std::allocator_traits<BlockAlloc>::allocate(blockAlloc, 1);
@@ -376,14 +390,16 @@ namespace sp {
             }
         }
 
-        constexpr SharedPtr(const SharedPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
+        constexpr SharedPtr(const SharedPtr& other) noexcept :
+            m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
                 m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
         constexpr SharedPtr(SharedPtr&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {}
+            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
+        }
 
 
         ~SharedPtr() { release(); }
@@ -434,7 +450,8 @@ namespace sp {
         element_type* m_ptr{nullptr};
         IControlBlockBase* m_ctl{nullptr};
 
-        constexpr SharedPtr(element_type* ptr, IControlBlockBase* ctl) noexcept : m_ptr(ptr), m_ctl(ctl) {
+        constexpr SharedPtr(element_type* ptr, IControlBlockBase* ctl) noexcept :
+            m_ptr(ptr), m_ctl(ctl) {
             if (m_ctl) {
                 m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -577,7 +594,8 @@ namespace sp {
         }
 
         constexpr WeakPtr(WeakPtr&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {}
+            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
+        }
 
         ~WeakPtr() { release(); }
         constexpr WeakPtr& operator=(const WeakPtr& other) noexcept {
@@ -649,7 +667,8 @@ namespace sp {
         constexpr element_type* operator->() const = delete;
 
         constexpr WeakPtr() noexcept = default;
-        constexpr WeakPtr(const SharedPtr<T[]>& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
+        constexpr WeakPtr(const SharedPtr<T[]>& other) noexcept :
+            m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             if (m_ctl) {
                 m_ctl->weakCount.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -662,7 +681,8 @@ namespace sp {
         }
 
         constexpr WeakPtr(WeakPtr&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {}
+            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
+        }
 
 
         ~WeakPtr() { release(); }
