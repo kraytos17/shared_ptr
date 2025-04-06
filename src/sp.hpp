@@ -25,8 +25,8 @@ namespace sp {
 
     class IControlBlockBase {
     public:
-        std::atomic_ulong strongCount{0};
-        std::atomic_ulong weakCount{0};
+        std::atomic_long strongCount{0};
+        std::atomic_long weakCount{0};
 
         virtual ~IControlBlockBase() = default;
         constexpr virtual void destroyObject() = 0;
@@ -80,14 +80,39 @@ namespace sp {
     class ControlBlockPtr : public IControlBlockBase {
     public:
         constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
-            m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
+            m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {
+            std::println("ControlBlockPtr created:");
+            std::println("  - ptr: {}", static_cast<void*>(m_ptr));
+            std::println("  - deleter type: {}", typeid(Deleter).name());
+            std::println("  - deleter address: {}", static_cast<void*>(&m_deleter));
+            std::println("  - initial strongCount: {}", strongCount.load());
+            std::println("  - initial weakCount: {}", weakCount.load());
+
+            if constexpr (std::is_class_v<Deleter> && !std::is_final_v<Deleter>) {
+                std::println("  - deleter appears to be a class type (possibly lambda)");
+            }
+        }
 
         constexpr void destroyObject() override {
-            std::println("ControlBlock<T>::destroyObject()");
-            m_deleter(m_ptr);
+            std::println("\nControlBlockPtr::destroyObject():");
+            std::println("  - ptr: {}", static_cast<void*>(m_ptr));
+            std::println("  - current deleter address: {}", static_cast<void*>(&m_deleter));
+            std::println("  - calling deleter...");
+
+            try {
+                m_deleter(m_ptr);
+                std::println("  - deleter completed successfully");
+            } catch (const std::exception& e) {
+                std::println("  - deleter threw exception: {}", e.what());
+                throw;
+            } catch (...) {
+                std::println("  - deleter threw unknown exception");
+                throw;
+            }
         }
 
         constexpr void* deleter(const std::type_info& type) const noexcept override {
+            std::println("ControlBlockPtr::deleter() - type query: {}", type.name());
             if (type == typeid(Deleter)) {
                 return const_cast<Deleter*>(&m_deleter);
             }
@@ -98,9 +123,11 @@ namespace sp {
         }
 
         constexpr void destroyBlock() override {
+            std::println("ControlBlockPtr::destroyBlock() - ptr={}", static_cast<void*>(m_ptr));
             using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
             BlockAlloc blockAlloc(m_alloc);
             std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
+            std::println("ControlBlockPtr::destroyBlock() - completed");
         }
 
         constexpr T* ptr() noexcept { return m_ptr; }
@@ -157,22 +184,6 @@ namespace sp {
             requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
             : SharedPtr(from_raw_ptr_with_deleter, ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
 
-        // template<typename U>
-        // explicit SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr)
-        //     requires std::convertible_to<U*, element_type*>
-        // {
-        //     if (ptr) {
-        //         using Block = ControlBlockPtr<U, std::default_delete<U>, std::allocator<U>>;
-        //         using BlockAlloc = std::allocator<Block>;
-
-        //         BlockAlloc blockAlloc;
-        //         Block* block = blockAlloc.allocate(1);
-        //         std::construct_at(block, ptr, std::default_delete<U>{}, std::allocator<U>{});
-        //         m_ptr = ptr;
-        //         m_ctl = block;
-        //     }
-        // }
-
         template<typename U, typename Deleter>
         SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d)
             requires std::convertible_to<U*, element_type*>
@@ -182,16 +193,42 @@ namespace sp {
         SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d, Alloc alloc)
             requires std::convertible_to<U*, element_type*> && std::invocable<Deleter&, U*>
         {
+            std::println("\nSharedPtr(from_raw_ptr_with_deleter_tag) constructor:");
+            std::println("  - raw ptr: {}", static_cast<void*>(ptr));
+            std::println("  - deleter type: {}", typeid(Deleter).name());
+            std::println("  - incoming deleter address: {}", static_cast<void*>(&d));
+
             if (ptr) {
-                using Block = ControlBlockPtr<U, std::decay_t<Deleter>, Alloc>;
+                using Block = ControlBlockPtr<U, std::remove_cv_t<Deleter>, Alloc>;
                 using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
                 BlockAlloc blockAlloc(alloc);
 
+                std::println("  - allocating control block...");
                 Block* block = blockAlloc.allocate(1);
+                std::println("  - control block allocated at: {}", static_cast<void*>(block));
+
+                std::println("  - constructing control block with deleter...");
                 std::construct_at(block, ptr, std::move(d), alloc);
+
                 m_ptr = ptr;
                 m_ctl = block;
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
+
+                std::println("  - SharedPtr initialized:");
+                std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
+                std::println("    - control block: {}", static_cast<void*>(m_ctl));
+                std::println("    - initial strongCount: {}", m_ctl->strongCount.load());
+            } else {
+                std::println("  - nullptr input, creating empty SharedPtr");
             }
+        }
+
+        ~SharedPtr() {
+            std::println("~SharedPtr() - ptr={}, ctl={}, strongCount={}",
+                         static_cast<void*>(m_ptr),
+                         static_cast<void*>(m_ctl),
+                         m_ctl ? m_ctl->strongCount.load() : 0);
+            release();
         }
 
         constexpr SharedPtr(const SharedPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
@@ -203,7 +240,6 @@ namespace sp {
         constexpr SharedPtr(SharedPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {}
 
-        ~SharedPtr() { release(); }
         SharedPtr& operator=(const SharedPtr& other) noexcept {
             if (this != &other) {
                 this->~SharedPtr();
@@ -253,12 +289,25 @@ namespace sp {
         }
 
         constexpr void release() noexcept {
-            if (m_ctl && m_ctl->strongCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                m_ctl->destroyObject();
-                if (m_ctl->weakCount.load(std::memory_order_acquire) == 0) {
-                    m_ctl->destroyBlock();
+            std::println("SharedPtr::release() - enter");
+            if (m_ctl) {
+                auto oldCount = m_ctl->strongCount.fetch_sub(1, std::memory_order_acq_rel);
+                std::println("SharedPtr::release() - strongCount decreased from {} to {}", oldCount, oldCount - 1);
+
+                if (oldCount == 1) {
+                    std::println("SharedPtr::release() - last strong reference, destroying object");
+                    m_ctl->destroyObject();
+
+                    auto weakCount = m_ctl->weakCount.load(std::memory_order_acquire);
+                    std::println("SharedPtr::release() - weakCount={}", weakCount);
+
+                    if (weakCount == 0) {
+                        std::println("SharedPtr::release() - no weak references, destroying block");
+                        m_ctl->destroyBlock();
+                    }
                 }
             }
+            std::println("SharedPtr::release() - exit");
         }
 
         template<typename U, typename... Args>
@@ -323,6 +372,7 @@ namespace sp {
 
                 m_ptr = ptr;
                 m_ctl = block;
+                m_ctl->strongCount.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
@@ -402,8 +452,8 @@ namespace sp {
         template<typename U>
         friend constexpr SharedPtr<U[]> makeSharedArray(size_t size);
 
-        // template<typename U, typename Alloc, typename... Args>
-        // friend constexpr SharedPtr<U[]> allocateSharedArray(const Alloc& alloc, size_t size);
+        template<typename U, typename Alloc>
+        friend constexpr SharedPtr<U[]> allocateSharedArray(const Alloc& alloc, size_t size);
 
         friend class WeakPtr<element_type>;
     };
@@ -423,6 +473,10 @@ namespace sp {
 
     template<typename T>
     [[nodiscard]] constexpr SharedPtr<T[]> makeSharedArray(size_t size) {
+        if (size == 0) {
+            return {};
+        }
+
         using Alloc = std::allocator<T>;
         using Deleter = ArrayDeleter<T, Alloc>;
         using Block = ControlBlockPtr<T[], Deleter, Alloc>;
@@ -455,6 +509,47 @@ namespace sp {
                 std::destroy_at(ptr + i);
             }
             std::allocator_traits<Alloc>::deallocate(alloc, ptr, size);
+            throw;
+        }
+    }
+
+    template<typename T, typename Alloc>
+    [[nodiscard]] constexpr SharedPtr<T[]> allocateSharedArray(const Alloc& alloc, size_t size) {
+        if (size == 0) {
+            return {};
+        }
+
+        using ElementAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
+        using Deleter = ArrayDeleter<T, ElementAlloc>;
+        using Block = ControlBlockPtr<T[], Deleter, Alloc>;
+
+        ElementAlloc elementAlloc(alloc);
+        T* ptr = std::allocator_traits<ElementAlloc>::allocate(elementAlloc, size);
+        size_t constructed = 0;
+
+        try {
+            for (; constructed < size; ++constructed) {
+                std::construct_at(ptr + constructed);
+            }
+
+            Deleter deleter{elementAlloc, size};
+            using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
+            BlockAlloc blockAlloc(alloc);
+            auto* block = blockAlloc.allocate(1);
+
+            try {
+                std::construct_at(block, ptr, deleter, alloc);
+                return SharedPtr<T[]>(ptr, static_cast<IControlBlockBase*>(block));
+            } catch (...) {
+                blockAlloc.deallocate(block, 1);
+                throw;
+            }
+
+        } catch (...) {
+            for (size_t i = 0; i < constructed; ++i) {
+                std::destroy_at(ptr + i);
+            }
+            std::allocator_traits<ElementAlloc>::deallocate(elementAlloc, ptr, size);
             throw;
         }
     }
@@ -504,7 +599,7 @@ namespace sp {
                         return {};
                     }
                     if (m_ctl->strongCount.compare_exchange_weak(
-                            count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                          count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                         result.m_ptr = m_ptr;
                         result.m_ctl = m_ctl;
                         return result;
@@ -590,7 +685,7 @@ namespace sp {
                         break;
                     }
                 } while (!m_ctl->strongCount.compare_exchange_weak(
-                    count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed));
+                  count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed));
 
                 if (count != 0) {
                     result.m_ptr = m_ptr;

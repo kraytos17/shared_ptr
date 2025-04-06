@@ -23,8 +23,8 @@ TEST_CASE(make_shared_construction) {
         testing::assert_eq<"*ptr", "42">(*ptr, 42);
         testing::assert_eq<"ptr.strongCount()", "1">(ptr.strongCount(), 1);
         testing::assert_that<"Too many allocations">(
-            testing::AllocationTracker::allocations <= 3,
-            testing::detail::format_value(testing::AllocationTracker::allocations.load()));
+          testing::AllocationTracker::allocations <= 3,
+          testing::detail::format_value(testing::AllocationTracker::allocations.load()));
     }
     testing::AllocationTracker::check_balanced();
 }
@@ -77,6 +77,26 @@ TEST_CASE(weak_ptr_functionality) {
     shared.reset();
     testing::assert_that<"WeakPtr should be expired">(weak.expired());
     testing::assert_eq<"weak.lock().get()", "nullptr">(weak.lock().get(), nullptr);
+}
+
+TEST_CASE(self_assignment) {
+    auto ptr = sp::makeShared<int>(42);
+    ptr = ptr;
+    testing::assert_that<"Pointer should remain valid">(ptr);
+    testing::assert_eq<"Value should remain", "42">(*ptr, 42);
+    testing::assert_eq<"Refcount should remain 1", "1">(ptr.strongCount(), 1);
+}
+
+TEST_CASE(nullptr_construction) {
+    sp::SharedPtr<int> ptr(nullptr);
+    testing::assert_that<"Should be null">(!ptr);
+    testing::assert_eq<"Refcount should be 0", "0">(ptr.strongCount(), 0);
+}
+
+TEST_CASE(zero_size_array) {
+    auto arr = sp::makeSharedArray<int>(0);
+    testing::assert_that<"Should be null">(!arr);
+    testing::assert_eq<"Refcount should be 0", "0">(arr.strongCount(), 0);
 }
 
 // TEST_CASE(thread_safety) {
@@ -227,6 +247,15 @@ TEST_CASE(allocator_support) {
     }
 
     testing::assert_eq<"alloc.deallocs()", "alloc.allocs()">(alloc.deallocs(), alloc.allocs());
+}
+
+TEST_CASE(allocator_with_array) {
+    TrackingAllocator<int> alloc;
+    {
+        auto arr = sp::allocateSharedArray<int>(alloc, 5);
+        testing::assert_that<"Should have allocations">(alloc.allocs() > 0);
+    }
+    testing::assert_eq<"Deallocations should match", "alloc.allocs()">(alloc.deallocs(), alloc.allocs());
 }
 
 // ==================== TEST RUNNER ====================
