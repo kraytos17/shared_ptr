@@ -71,10 +71,10 @@ namespace sp {
 
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 if (type == typeid(Deleter)) {
-                    return std::addressof(m_deleter);
+                    return const_cast<Deleter*>(&m_deleter);
                 }
                 if (type == typeid(Alloc)) {
-                    return std::addressof(m_alloc);
+                    return const_cast<Alloc*>(&m_alloc);
                 }
                 return nullptr;
             }
@@ -124,10 +124,10 @@ namespace sp {
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 std::println("ControlBlockPtr::deleter() - type query: {}", type.name());
                 if (type == typeid(Deleter)) {
-                    return std::addressof(m_deleter);
+                    return const_cast<Deleter*>(&m_deleter);
                 }
                 if (type == typeid(Alloc)) {
-                    return std::addressof(m_alloc);
+                    return const_cast<Alloc*>(&m_alloc);
                 }
                 return nullptr;
             }
@@ -160,13 +160,14 @@ namespace sp {
 
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 if (type == typeid(Deleter)) {
-                    return std::addressof(m_deleter);
+                    return const_cast<Deleter*>(&m_deleter);
                 }
                 if (type == typeid(Alloc)) {
-                    return std::addressof(m_alloc);
+                    return const_cast<Alloc*>(&m_alloc);
                 }
                 return nullptr;
             }
+
             constexpr void destroyBlock() override {
                 using BlockAlloc =
                   typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
