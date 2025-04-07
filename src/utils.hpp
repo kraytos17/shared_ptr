@@ -58,7 +58,7 @@ namespace testing {
     consteval void constexpr_assert(bool condition) {
         if (!condition) {
             throw std::logic_error(
-              std::format("Compile-time assertion failed: {}", Expr.view()).c_str());
+                std::format("Compile-time assertion failed: {}", Expr.view()).c_str());
         }
     }
 
@@ -84,10 +84,11 @@ namespace testing {
         if (!(lhs == rhs)) {
             // clang-format off
             fail(std::format("Assertion failed: {} == {}\n  Values: {} != {}",
-                             LhsExpr.view(),
-                             RhsExpr.view(),
-                             detail::format_value(std::forward<Lhs>(lhs)),
-                             detail::format_value(std::forward<Rhs>(rhs))), loc);
+                            LhsExpr.view(),
+                            RhsExpr.view(),
+                            detail::format_value(std::forward<Lhs>(lhs)),
+                            detail::format_value(std::forward<Rhs>(rhs))),
+                            loc);
             // clang-format on
         }
     }
@@ -98,9 +99,10 @@ namespace testing {
         if (!(lhs != rhs)) {
             // clang-format off
             fail(std::format("Assertion failed: {} != {}\n  Both values: {}",
-                             LhsExpr.view(),
-                             RhsExpr.view(),
-                             detail::format_value(std::forward<Lhs>(lhs))), loc);
+                            LhsExpr.view(),
+                            RhsExpr.view(),
+                            detail::format_value(std::forward<Lhs>(lhs))),
+                            loc);
             // clang-format on
         }
     }
@@ -120,19 +122,19 @@ namespace testing {
     struct TestRegistrar {
         TestRegistrar(const std::source_location& loc = std::source_location::current()) {
             test_registry().emplace_back(
-              Name.view(),
-              [] {
-                  if constexpr (std::is_invocable_v<decltype(Func)>) {
-                      try {
-                          Func();
-                      } catch (const std::exception& e) {
-                          fail(std::format("Test threw exception: {}", e.what()));
-                      } catch (...) {
-                          fail("Test threw unknown exception");
-                      }
-                  }
-              },
-              loc);
+                Name.view(),
+                [] {
+                    if constexpr (std::is_invocable_v<decltype(Func)>) {
+                        try {
+                            Func();
+                        } catch (const std::exception& e) {
+                            fail(std::format("Test threw exception: {}", e.what()));
+                        } catch (...) {
+                            fail("Test threw unknown exception");
+                        }
+                    }
+                },
+                loc);
         }
     };
 
@@ -153,7 +155,7 @@ namespace testing {
             }
         }
 
-        [[nodiscard]] inline static void* operator new(std::size_t size) {
+        [[nodiscard]] inline static void* operator new(size_t size) {
             allocations++;
             return std::malloc(size);
         }
@@ -163,7 +165,7 @@ namespace testing {
             std::free(ptr);
         }
 
-        inline static void operator delete(void* ptr, std::size_t) noexcept {
+        inline static void operator delete(void* ptr, size_t) noexcept {
             deallocations++;
             std::free(ptr);
         }

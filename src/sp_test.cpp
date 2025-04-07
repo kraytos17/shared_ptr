@@ -27,8 +27,8 @@ TEST_CASE(make_shared_construction) {
         testing::assert_eq<"*ptr", "42">(*ptr, 42);
         testing::assert_eq<"ptr.strongCount()", "1">(ptr.strongCount(), 1);
         testing::assert_that<"Too many allocations">(
-          testing::AllocationTracker::allocations <= 3,
-          testing::detail::format_value(testing::AllocationTracker::allocations.load()));
+            testing::AllocationTracker::allocations <= 3,
+            testing::detail::format_value(testing::AllocationTracker::allocations.load()));
     }
     testing::AllocationTracker::check_balanced();
 }
@@ -121,12 +121,12 @@ TEST_CASE(thread_safety) {
     int actual = shared->load(std::memory_order_seq_cst);
     int expected = kThreads * kIterations * 2;
     testing::assert_that<"Counter should reach expected value">(
-      actual == expected,
-      std::format("Expected {} ({} threads * {} iterations * 2 ops), got {}",
-                  expected,
-                  kThreads,
-                  kIterations,
-                  actual));
+        actual == expected,
+        std::format("Expected {} ({} threads * {} iterations * 2 ops), got {}",
+                    expected,
+                    kThreads,
+                    kIterations,
+                    actual));
 
     testing::assert_eq<"actual", "expected">(actual, expected);
 }
@@ -200,32 +200,45 @@ TEST_CASE(move_only_types) {
 }
 
 struct TrackingCounter {
-    int allocs = 0;
-    int deallocs = 0;
+    int allocs{0};
+    int deallocs{0};
 };
 
 template<typename T>
 struct TrackingAllocator {
     using value_type = T;
-    std::shared_ptr<TrackingCounter> counter = std::make_shared<TrackingCounter>();
 
-    TrackingAllocator() = default;
+    std::shared_ptr<TrackingCounter>* counter_ptr = nullptr;
+
+    constexpr TrackingAllocator() = default;
+    constexpr TrackingAllocator(std::shared_ptr<TrackingCounter>& counter) :
+        counter_ptr(&counter) {}
 
     template<typename U>
-    TrackingAllocator(const TrackingAllocator<U>& other) noexcept : counter(other.counter) {}
+    constexpr TrackingAllocator(const TrackingAllocator<U>& other) noexcept :
+        counter_ptr(other.counter_ptr) {}
 
-    T* allocate(size_t n) {
-        ++counter->allocs;
+    constexpr T* allocate(size_t n) {
+        if (counter_ptr && *counter_ptr) {
+            ++(*counter_ptr)->allocs;
+        }
         return std::allocator<T>{}.allocate(n);
     }
 
-    void deallocate(T* p, size_t n) {
-        ++counter->deallocs;
+    constexpr void deallocate(T* p, size_t n) {
+        if (counter_ptr && *counter_ptr) {
+            ++(*counter_ptr)->deallocs;
+        }
         std::allocator<T>{}.deallocate(p, n);
     }
 
-    int allocs() const { return counter->allocs; }
-    int deallocs() const { return counter->deallocs; }
+    constexpr int allocs() const noexcept {
+        return (counter_ptr && *counter_ptr) ? (*counter_ptr)->allocs : 0;
+    }
+
+    constexpr int deallocs() const noexcept {
+        return (counter_ptr && *counter_ptr) ? (*counter_ptr)->deallocs : 0;
+    }
 
     template<typename U>
     struct rebind {
@@ -233,18 +246,20 @@ struct TrackingAllocator {
     };
 
     template<typename U>
-    bool operator==(const TrackingAllocator<U>& other) const {
-        return counter == other.counter;
+    constexpr bool operator==(const TrackingAllocator<U>& other) const {
+        return counter_ptr == other.counter_ptr;
     }
 
     template<typename U>
-    bool operator!=(const TrackingAllocator<U>& other) const {
+    constexpr bool operator!=(const TrackingAllocator<U>& other) const {
         return !(*this == other);
     }
 };
 
 TEST_CASE(allocator_support) {
-    TrackingAllocator<int> alloc;
+    auto counter = std::make_shared<TrackingCounter>();
+    TrackingAllocator<int> alloc(counter);
+
     {
         auto _ = sp::allocateShared<int>(alloc, 42);
         testing::assert_that<"Allocator should have performed allocation">(alloc.allocs() > 0);
@@ -255,11 +270,14 @@ TEST_CASE(allocator_support) {
 }
 
 TEST_CASE(allocator_with_array) {
-    TrackingAllocator<int> alloc;
+    auto counter = std::make_shared<TrackingCounter>();
+    TrackingAllocator<int> alloc(counter);
+
     {
         auto arr = sp::allocateSharedArray<int>(alloc, 5);
         testing::assert_that<"Should have allocations">(alloc.allocs() > 0);
     }
+
     testing::assert_eq<"Deallocations should match", "alloc.allocs()">(alloc.deallocs(),
                                                                        alloc.allocs());
 }

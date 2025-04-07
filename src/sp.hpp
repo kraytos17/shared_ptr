@@ -54,17 +54,17 @@ namespace sp {
 
             constexpr T* ptr() noexcept {
                 return std::assume_aligned<alignof(T)>(
-                  std::launder(reinterpret_cast<T*>(&m_storage)));
+                    std::launder(reinterpret_cast<T*>(&m_storage)));
             }
 
             constexpr const T* ptr() const noexcept {
                 return std::assume_aligned<alignof(T)>(
-                  std::launder(reinterpret_cast<T*>(&m_storage)));
+                    std::launder(reinterpret_cast<T*>(&m_storage)));
             }
 
             constexpr void destroyBlock() override {
-                using BlockAlloc =
-                  typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockDirect>;
+                using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<
+                    ControlBlockDirect>;
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
             }
@@ -135,7 +135,7 @@ namespace sp {
             constexpr void destroyBlock() override {
                 std::println("ControlBlockPtr::destroyBlock() - ptr={}", static_cast<void*>(m_ptr));
                 using BlockAlloc =
-                  typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+                    typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
                 std::println("ControlBlockPtr::destroyBlock() - completed");
@@ -170,7 +170,7 @@ namespace sp {
 
             constexpr void destroyBlock() override {
                 using BlockAlloc =
-                  typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+                    typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
             }
@@ -228,12 +228,12 @@ namespace sp {
             }
 
             using Block = std::conditional_t<
-              std::is_array_v<T>,
-              ControlBlockPtr<T[], std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>,
-              ControlBlockPtr<T, std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>>;
+                std::is_array_v<T>,
+                ControlBlockPtr<T[], std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>,
+                ControlBlockPtr<T, std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>>;
 
-            using BlockAlloc =
-              typename std::allocator_traits<std::remove_cv_t<Alloc>>::template rebind_alloc<Block>;
+            using BlockAlloc = typename std::allocator_traits<
+                std::remove_cv_t<Alloc>>::template rebind_alloc<Block>;
             BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
 
             auto* block = blockAlloc.allocate(1);
@@ -247,8 +247,12 @@ namespace sp {
             if (ctl) {
                 auto count = ctl->strongCount.load(std::memory_order_acquire);
                 while (count != 0) {
-                    if (ctl->strongCount.compare_exchange_weak(
-                          count, count + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                    // clang-format off
+                    if (ctl->strongCount.compare_exchange_weak(count,
+                                            count + 1,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
+                        // clang-format on
                         result.m_ptr = ptr;
                         result.m_ctl = ctl;
                         break;
@@ -306,7 +310,7 @@ namespace sp {
                 Deleter deleter{elementAlloc, size};
 
                 using BlockAlloc =
-                  typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
+                    typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
                 BlockAlloc blockAlloc(alloc);
                 auto* block = blockAlloc.allocate(1);
 
