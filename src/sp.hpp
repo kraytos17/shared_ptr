@@ -70,10 +70,12 @@ namespace sp {
             }
 
             constexpr void* deleter(const std::type_info& type) const noexcept override {
-                if (type == typeid(Deleter))
-                    return const_cast<Deleter*>(&m_deleter);
-                if (type == typeid(Alloc))
-                    return const_cast<Alloc*>(&m_alloc);
+                if (type == typeid(Deleter)) {
+                    return std::addressof(m_deleter);
+                }
+                if (type == typeid(Alloc)) {
+                    return std::addressof(m_alloc);
+                }
                 return nullptr;
             }
 
@@ -122,10 +124,10 @@ namespace sp {
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 std::println("ControlBlockPtr::deleter() - type query: {}", type.name());
                 if (type == typeid(Deleter)) {
-                    return const_cast<Deleter*>(&m_deleter);
+                    return std::addressof(m_deleter);
                 }
                 if (type == typeid(Alloc)) {
-                    return const_cast<Alloc*>(&m_alloc);
+                    return std::addressof(m_alloc);
                 }
                 return nullptr;
             }
@@ -158,10 +160,10 @@ namespace sp {
 
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 if (type == typeid(Deleter)) {
-                    return const_cast<Deleter*>(&m_deleter);
+                    return std::addressof(m_deleter);
                 }
                 if (type == typeid(Alloc)) {
-                    return const_cast<Alloc*>(&m_alloc);
+                    return std::addressof(m_alloc);
                 }
                 return nullptr;
             }
@@ -261,9 +263,7 @@ namespace sp {
             size_t size;
 
             constexpr void operator()(A* ptr) noexcept {
-                for (size_t i = 0; i < size; ++i) {
-                    std::destroy_at(ptr + i);
-                }
+                std::destroy_n(ptr, size);
                 std::allocator_traits<Alloc>::deallocate(alloc, ptr, size);
             }
         };
@@ -301,9 +301,7 @@ namespace sp {
             size_t constructed = 0;
 
             try {
-                for (; constructed < size; ++constructed) {
-                    std::construct_at(ptr + constructed);
-                }
+                std::uninitialized_default_construct_n(ptr, size);
                 Deleter deleter{elementAlloc, size};
 
                 using BlockAlloc =
@@ -319,9 +317,7 @@ namespace sp {
                     throw;
                 }
             } catch (...) {
-                for (size_t i = 0; i < constructed; ++i) {
-                    std::destroy_at(ptr + i);
-                }
+                std::destroy_n(ptr, constructed);
                 std::allocator_traits<ElementAlloc>::deallocate(elementAlloc, ptr, size);
                 throw;
             }
@@ -477,7 +473,6 @@ namespace sp {
         {
             std::println("\nSharedPtr<T[]>(from_raw_ptr_with_deleter_tag) constructor:");
             std::println("  - raw ptr: {}", static_cast<void*>(ptr));
-            // std::println("  - array size: {}", size);
             std::println("  - deleter type: {}", typeid(Deleter).name());
 
             if (ptr) {
