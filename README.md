@@ -113,7 +113,7 @@ Provides non-owning references to objects managed by `SharedPtr`.
 ## Usage Example
 
 ```cpp
-#include "shared_ptr.hpp"
+#include "sp.hpp"
 
 int main() {
     // Single object
