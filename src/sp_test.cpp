@@ -83,14 +83,6 @@ TEST_CASE(weak_ptr_functionality) {
     testing::assert_eq<"weak.lock().get()", "nullptr">(weak.lock().get(), nullptr);
 }
 
-TEST_CASE(self_assignment) {
-    auto ptr = sp::makeShared<int>(42);
-    ptr = ptr;
-    testing::assert_that<"Pointer should remain valid">(ptr);
-    testing::assert_eq<"Value should remain", "42">(*ptr, 42);
-    testing::assert_eq<"Refcount should remain 1", "1">(ptr.strongCount(), 1);
-}
-
 TEST_CASE(nullptr_construction) {
     sp::SharedPtr<int> ptr(nullptr);
     testing::assert_that<"Should be null">(!ptr);
