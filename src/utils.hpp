@@ -37,9 +37,7 @@ namespace testing {
         struct FixedString {
             char chars[N]{};
             consteval FixedString(const char (&str)[N]) { std::copy_n(str, N, chars); }
-
             constexpr operator std::string_view() const { return {chars, N - 1}; }
-
             [[nodiscard]] constexpr std::string_view view() const { return {chars, N - 1}; }
         };
     } // namespace detail

@@ -67,8 +67,6 @@ target_compile_options(compiler_options INTERFACE
         -DNDEBUG
         -flto
         -march=native
-        -fno-exceptions
-        -fno-rtti
     >
 )
 

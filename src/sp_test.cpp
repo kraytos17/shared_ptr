@@ -16,16 +16,16 @@ TEST_CASE(default_constructor) {
     sp::SharedPtr<int> ptr;
     testing::assert_that<"Default constructed SharedPtr should be null">(!ptr);
     testing::assert_eq<"ptr.get()", "nullptr">(ptr.get(), nullptr);
-    testing::assert_eq<"ptr.strongCount()", "0">(ptr.strongCount(), 0);
+    testing::assert_eq<"ptr.strong_count()", "0">(ptr.strong_count(), 0);
 }
 
 TEST_CASE(make_shared_construction) {
     testing::AllocationTracker::reset();
     {
-        auto ptr = sp::makeShared<int>(42);
-        testing::assert_that<"makeShared returned null">(ptr);
+        auto ptr = sp::make_shared<int>(42);
+        testing::assert_that<"make_shared returned null">(ptr);
         testing::assert_eq<"*ptr", "42">(*ptr, 42);
-        testing::assert_eq<"ptr.strongCount()", "1">(ptr.strongCount(), 1);
+        testing::assert_eq<"ptr.strong_count()", "1">(ptr.strong_count(), 1);
         testing::assert_that<"Too many allocations">(
             testing::AllocationTracker::allocations <= 3,
             testing::detail::format_value(testing::AllocationTracker::allocations.load()));
@@ -34,48 +34,48 @@ TEST_CASE(make_shared_construction) {
 }
 
 TEST_CASE(copy_semantics) {
-    auto ptr1 = sp::makeShared<int>(42);
+    auto ptr1 = sp::make_shared<int>(42);
     {
         sp::SharedPtr<int> ptr2(ptr1);
         testing::assert_eq<"ptr1.get()", "ptr2.get()">(ptr1.get(), ptr2.get());
-        testing::assert_eq<"ptr1.strongCount()", "2">(ptr1.strongCount(), 2);
-        testing::assert_eq<"ptr2.strongCount()", "2">(ptr2.strongCount(), 2);
+        testing::assert_eq<"ptr1.strong_count()", "2">(ptr1.strong_count(), 2);
+        testing::assert_eq<"ptr2.strong_count()", "2">(ptr2.strong_count(), 2);
 
         sp::SharedPtr<int> ptr3;
         ptr3 = ptr2;
-        testing::assert_eq<"ptr1.strongCount()", "3">(ptr1.strongCount(), 3);
+        testing::assert_eq<"ptr1.strong_count()", "3">(ptr1.strong_count(), 3);
     }
-    testing::assert_eq<"ptr1.strongCount()", "1">(ptr1.strongCount(), 1);
+    testing::assert_eq<"ptr1.strong_count()", "1">(ptr1.strong_count(), 1);
 }
 
 TEST_CASE(move_semantics) {
-    auto ptr1 = sp::makeShared<int>(42);
+    auto ptr1 = sp::make_shared<int>(42);
     {
         sp::SharedPtr<int> ptr2(std::move(ptr1));
         testing::assert_that<"Moved-from pointer should be null">(!ptr1);
-        testing::assert_eq<"ptr1.strongCount()", "0">(ptr1.strongCount(), 0);
+        testing::assert_eq<"ptr1.strong_count()", "0">(ptr1.strong_count(), 0);
         testing::assert_that<"ptr2 should be valid">(ptr2);
         testing::assert_eq<"*ptr2", "42">(*ptr2, 42);
-        testing::assert_eq<"ptr2.strongCount()", "1">(ptr2.strongCount(), 1);
+        testing::assert_eq<"ptr2.strong_count()", "1">(ptr2.strong_count(), 1);
 
         sp::SharedPtr<int> ptr3;
         ptr3 = std::move(ptr2);
         testing::assert_that<"ptr2 should be null after move">(!ptr2);
         testing::assert_that<"ptr3 should be valid">(ptr3);
-        testing::assert_eq<"ptr3.strongCount()", "1">(ptr3.strongCount(), 1);
+        testing::assert_eq<"ptr3.strong_count()", "1">(ptr3.strong_count(), 1);
     }
 }
 
 TEST_CASE(weak_ptr_functionality) {
-    auto shared = sp::makeShared<int>(42);
+    auto shared = sp::make_shared<int>(42);
     sp::WeakPtr<int> weak(shared);
 
     testing::assert_that<"WeakPtr should not be expired">(!weak.expired());
-    testing::assert_eq<"weak.strongCount()", "1">(weak.strongCount(), 1);
+    testing::assert_eq<"weak.strong_count()", "1">(weak.strong_count(), 1);
 
     if (auto locked = weak.lock()) {
         testing::assert_eq<"*locked", "42">(*locked, 42);
-        testing::assert_eq<"shared.strongCount()", "2">(shared.strongCount(), 2);
+        testing::assert_eq<"shared.strong_count()", "2">(shared.strong_count(), 2);
     }
 
     shared.reset();
@@ -86,20 +86,20 @@ TEST_CASE(weak_ptr_functionality) {
 TEST_CASE(nullptr_construction) {
     sp::SharedPtr<int> ptr(nullptr);
     testing::assert_that<"Should be null">(!ptr);
-    testing::assert_eq<"Refcount should be 0", "0">(ptr.strongCount(), 0);
+    testing::assert_eq<"Refcount should be 0", "0">(ptr.strong_count(), 0);
 }
 
 TEST_CASE(zero_size_array) {
-    auto arr = sp::makeSharedArray<int>(0);
+    auto arr = sp::make_shared_array<int>(0);
     testing::assert_that<"Should be null">(!arr);
-    testing::assert_eq<"Refcount should be 0", "0">(arr.strongCount(), 0);
+    testing::assert_eq<"Refcount should be 0", "0">(arr.strong_count(), 0);
 }
 
 TEST_CASE(thread_safety) {
     constexpr int kThreads = 10;
     constexpr int kIterations = 1000;
 
-    auto shared = sp::makeShared<std::atomic_int>(0);
+    auto shared = sp::make_shared<std::atomic_int>(0);
     std::barrier sync_point(kThreads + 1);
     std::vector<std::jthread> threads;
 
@@ -157,7 +157,7 @@ TEST_CASE(array_support) {
 
     constructions = destructions = 0;
     {
-        auto arr = sp::makeSharedArray<Tracked>(5);
+        auto arr = sp::make_shared_array<Tracked>(5);
         testing::assert_eq<"constructions", "5">(constructions, 5);
         testing::assert_eq<"destructions", "0">(destructions, 0);
     }
@@ -178,7 +178,7 @@ int Thrower::count = 0;
 TEST_CASE(exception_safety) {
     Thrower::count = 0;
     try {
-        auto arr = sp::makeSharedArray<Thrower>(5);
+        auto arr = sp::make_shared_array<Thrower>(5);
         testing::assert_that<"Should have thrown std::runtime_error after 3rd Thrower">(false);
     } catch (const std::runtime_error&) {
         testing::assert_eq<"Thrower::count", "3">(Thrower::count, 3);
@@ -193,7 +193,7 @@ TEST_CASE(move_only_types) {
         MoveOnly& operator=(MoveOnly&&) = default;
     };
 
-    auto ptr = sp::makeShared<MoveOnly>();
+    auto ptr = sp::make_shared<MoveOnly>();
     auto ptr2 = std::move(ptr);
     testing::assert_that<"Move should leave source null">(!ptr);
     testing::assert_that<"ptr2 should be valid">(ptr2);
@@ -261,7 +261,7 @@ TEST_CASE(allocator_support) {
     TrackingAllocator<int> alloc(counter);
 
     {
-        auto _ = sp::allocateShared<int>(alloc, 42);
+        auto _ = sp::allocated_shared<int>(alloc, 42);
         testing::assert_that<"Allocator should have performed allocation">(alloc.allocs() > 0);
         testing::assert_eq<"alloc.deallocs()", "0">(alloc.deallocs(), 0);
     }
@@ -274,7 +274,7 @@ TEST_CASE(allocator_with_array) {
     TrackingAllocator<int> alloc(counter);
 
     {
-        auto arr = sp::allocateSharedArray<int>(alloc, 5);
+        auto arr = sp::allocate_shared_array<int>(alloc, 5);
         testing::assert_that<"Should have allocations">(alloc.allocs() > 0);
     }
 

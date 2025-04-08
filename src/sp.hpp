@@ -33,8 +33,8 @@ namespace sp {
             std::atomic_long weakCount{0};
 
             virtual ~IControlBlockBase() = default;
-            constexpr virtual void destroyObject() = 0;
-            constexpr virtual void destroyBlock() = 0;
+            constexpr virtual void destroy_object() = 0;
+            constexpr virtual void destroy_block() = 0;
             constexpr virtual void* deleter(const std::type_info&) const noexcept = 0;
         };
 
@@ -50,7 +50,7 @@ namespace sp {
 
             ~ControlBlockDirect() = default;
 
-            constexpr void destroyObject() override { std::destroy_at(ptr()); }
+            constexpr void destroy_object() override { std::destroy_at(ptr()); }
 
             constexpr T* ptr() noexcept {
                 return std::assume_aligned<alignof(T)>(
@@ -62,7 +62,7 @@ namespace sp {
                     std::launder(reinterpret_cast<T*>(&m_storage)));
             }
 
-            constexpr void destroyBlock() override {
+            constexpr void destroy_block() override {
                 using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<
                     ControlBlockDirect>;
                 BlockAlloc blockAlloc(m_alloc);
@@ -103,8 +103,8 @@ namespace sp {
                 }
             }
 
-            constexpr void destroyObject() override {
-                std::println("\nControlBlockPtr::destroyObject():");
+            constexpr void destroy_object() override {
+                std::println("\nControlBlockPtr::destroy_object():");
                 std::println("  - ptr: {}", static_cast<void*>(m_ptr));
                 std::println("  - current deleter address: {}", static_cast<void*>(&m_deleter));
                 std::println("  - calling deleter...");
@@ -132,13 +132,14 @@ namespace sp {
                 return nullptr;
             }
 
-            constexpr void destroyBlock() override {
-                std::println("ControlBlockPtr::destroyBlock() - ptr={}", static_cast<void*>(m_ptr));
+            constexpr void destroy_block() override {
+                std::println("ControlBlockPtr::destroy_block() - ptr={}",
+                             static_cast<void*>(m_ptr));
                 using BlockAlloc =
                     typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
-                std::println("ControlBlockPtr::destroyBlock() - completed");
+                std::println("ControlBlockPtr::destroy_block() - completed");
             }
 
             constexpr T* ptr() noexcept { return m_ptr; }
@@ -156,7 +157,7 @@ namespace sp {
             constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
                 m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
 
-            constexpr void destroyObject() override { m_deleter(m_ptr); }
+            constexpr void destroy_object() override { m_deleter(m_ptr); }
 
             constexpr void* deleter(const std::type_info& type) const noexcept override {
                 if (type == typeid(Deleter)) {
@@ -168,7 +169,7 @@ namespace sp {
                 return nullptr;
             }
 
-            constexpr void destroyBlock() override {
+            constexpr void destroy_block() override {
                 using BlockAlloc =
                     typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
                 BlockAlloc blockAlloc(m_alloc);
@@ -184,45 +185,44 @@ namespace sp {
             [[no_unique_address]] Alloc m_alloc;
         };
 
-        inline constexpr void incrementRef(IControlBlockBase* ctl,
-                                           std::atomic_long& counter) noexcept {
+        inline constexpr void incr_ref(IControlBlockBase* ctl, std::atomic_long& counter) noexcept {
             if (ctl) {
                 counter.fetch_add(1, std::memory_order_acq_rel);
             }
         }
 
-        inline constexpr void incrementStrongRef(IControlBlockBase* ctl) noexcept {
-            incrementRef(ctl, ctl->strongCount);
+        inline constexpr void incr_strong_ref(IControlBlockBase* ctl) noexcept {
+            incr_ref(ctl, ctl->strongCount);
         }
 
-        inline constexpr void incrementWeakRef(IControlBlockBase* ctl) noexcept {
-            incrementRef(ctl, ctl->weakCount);
+        inline constexpr void incr_weak_ref(IControlBlockBase* ctl) noexcept {
+            incr_ref(ctl, ctl->weakCount);
         }
 
-        inline constexpr void releaseSharedRef(IControlBlockBase* ctl) noexcept {
+        inline constexpr void release_shared_ref(IControlBlockBase* ctl) noexcept {
             if (!ctl) {
                 return;
             }
 
             auto oldCount = ctl->strongCount.fetch_sub(1, std::memory_order_acq_rel);
             if (oldCount == 1) {
-                ctl->destroyObject();
+                ctl->destroy_object();
                 if (ctl->weakCount.load(std::memory_order_acquire) == 0) {
-                    ctl->destroyBlock();
+                    ctl->destroy_block();
                 }
             }
         }
 
-        inline constexpr void releaseWeakRef(IControlBlockBase* ctl) noexcept {
+        inline constexpr void release_weak_ref(IControlBlockBase* ctl) noexcept {
             if (ctl && ctl->weakCount.fetch_sub(1, std::memory_order_release) == 1) {
                 if (ctl->strongCount.load(std::memory_order_acquire) == 0) {
-                    ctl->destroyBlock();
+                    ctl->destroy_block();
                 }
             }
         }
 
         template<typename T, typename U, typename Deleter, typename Alloc>
-        constexpr IControlBlockBase* createControlBlock(U* ptr, Deleter&& d, Alloc&& alloc) {
+        constexpr IControlBlockBase* create_ctl_block(U* ptr, Deleter&& d, Alloc&& alloc) {
             if (!ptr) {
                 return nullptr;
             }
@@ -242,7 +242,7 @@ namespace sp {
         }
 
         template<typename T>
-        constexpr SharedPtr<T> weakPtrLockImpl(T* ptr, IControlBlockBase* ctl) noexcept {
+        constexpr SharedPtr<T> weak_ptr_lock_impl(T* ptr, IControlBlockBase* ctl) noexcept {
             SharedPtr<T> result;
             if (ctl) {
                 auto count = ctl->strongCount.load(std::memory_order_acquire);
@@ -274,7 +274,7 @@ namespace sp {
         };
 
         template<typename T, typename Alloc, typename... Args>
-        [[nodiscard]] constexpr SharedPtr<T> allocSharedImpl(const Alloc& alloc, Args&&... args) {
+        [[nodiscard]] constexpr SharedPtr<T> alloc_shared_impl(const Alloc& alloc, Args&&... args) {
             using Block = ControlBlockDirect<T, std::default_delete<T>, Alloc>;
             using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
 
@@ -286,13 +286,13 @@ namespace sp {
         }
 
         template<typename T, typename... Args>
-        [[nodiscard]] constexpr SharedPtr<T> makeSharedImpl(Args&&... args) {
-            return allocSharedImpl<T>(std::allocator<T>{}, std::forward<Args>(args)...);
+        [[nodiscard]] constexpr SharedPtr<T> make_shared_impl(Args&&... args) {
+            return alloc_shared_impl<T>(std::allocator<T>{}, std::forward<Args>(args)...);
         }
 
         template<typename T, typename Alloc>
-        [[nodiscard]] constexpr SharedPtr<T[]> allocSharedArrayImpl(const Alloc& alloc,
-                                                                    size_t size) {
+        [[nodiscard]] constexpr SharedPtr<T[]> alloc_shared_array_impl(const Alloc& alloc,
+                                                                       size_t size) {
             if (size == 0) {
                 return {};
             }
@@ -329,8 +329,8 @@ namespace sp {
         }
 
         template<typename T>
-        [[nodiscard]] constexpr SharedPtr<T[]> makeSharedArrayImpl(size_t size) {
-            return allocSharedArrayImpl<T>(std::allocator<T>{}, size);
+        [[nodiscard]] constexpr SharedPtr<T[]> make_shared_array_impl(size_t size) {
+            return alloc_shared_array_impl<T>(std::allocator<T>{}, size);
         }
     } // namespace detail
 
@@ -363,13 +363,13 @@ namespace sp {
             std::println("  - incoming deleter address: {}", static_cast<void*>(&d));
 
             if (ptr) {
-                m_ctl = detail::createControlBlock<T>(ptr, std::move(d), std::move(alloc));
+                m_ctl = detail::create_ctl_block<T>(ptr, std::move(d), std::move(alloc));
                 m_ptr = ptr;
                 std::println("  - SharedPtr initialized:");
                 std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
                 std::println("    - control block: {}", static_cast<void*>(m_ctl));
                 std::println("    - initial strongCount: {}", m_ctl->strongCount.load());
-                detail::incrementStrongRef(m_ctl);
+                detail::incr_strong_ref(m_ctl);
             } else {
                 std::println("  - nullptr input, creating empty SharedPtr");
             }
@@ -380,13 +380,13 @@ namespace sp {
                          static_cast<void*>(m_ptr),
                          static_cast<void*>(m_ctl),
                          m_ctl ? m_ctl->strongCount.load() : 0);
-            detail::releaseSharedRef(m_ctl);
+            detail::release_shared_ref(m_ctl);
         }
 
         constexpr SharedPtr(const SharedPtr& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("SharedPtr copy constructor - incrementing ref count");
-            detail::incrementStrongRef(m_ctl);
+            detail::incr_strong_ref(m_ctl);
         }
 
         constexpr SharedPtr(SharedPtr&& other) noexcept :
@@ -397,10 +397,10 @@ namespace sp {
         SharedPtr& operator=(const SharedPtr& other) noexcept {
             std::println("SharedPtr copy assignment");
             if (this != &other) {
-                detail::releaseSharedRef(m_ctl);
+                detail::release_shared_ref(m_ctl);
                 m_ptr = other.m_ptr;
                 m_ctl = other.m_ctl;
-                detail::incrementStrongRef(m_ctl);
+                detail::incr_strong_ref(m_ctl);
             }
             return *this;
         }
@@ -415,7 +415,7 @@ namespace sp {
         [[nodiscard]] constexpr element_type& operator*() const noexcept { return *m_ptr; }
         [[nodiscard]] constexpr element_type* operator->() const noexcept { return m_ptr; }
         [[nodiscard]] constexpr operator bool() const noexcept { return m_ptr != nullptr; }
-        [[nodiscard]] constexpr long strongCount() const noexcept {
+        [[nodiscard]] constexpr long strong_count() const noexcept {
             return m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
         }
 
@@ -443,18 +443,18 @@ namespace sp {
         constexpr SharedPtr(T* ptr, detail::IControlBlockBase* ctl) noexcept :
             m_ptr(ptr), m_ctl(ctl) {
             std::println("SharedPtr private constructor");
-            detail::incrementStrongRef(m_ctl);
+            detail::incr_strong_ref(m_ctl);
         }
 
         template<typename U, typename... Args>
-        friend constexpr SharedPtr<U> detail::makeSharedImpl(Args&&... args);
+        friend constexpr SharedPtr<U> detail::make_shared_impl(Args&&... args);
 
         template<typename U, typename Alloc, typename... Args>
-        friend constexpr SharedPtr<U> detail::allocSharedImpl(const Alloc& alloc, Args&&... args);
+        friend constexpr SharedPtr<U> detail::alloc_shared_impl(const Alloc& alloc, Args&&... args);
 
         template<typename U>
         friend constexpr SharedPtr<U>
-        detail::weakPtrLockImpl(U* ptr, detail::IControlBlockBase* ctl) noexcept;
+        detail::weak_ptr_lock_impl(U* ptr, detail::IControlBlockBase* ctl) noexcept;
 
         friend class WeakPtr<element_type>;
     };
@@ -481,12 +481,12 @@ namespace sp {
             std::println("  - deleter type: {}", typeid(Deleter).name());
 
             if (ptr) {
-                m_ctl = detail::createControlBlock<T[]>(ptr, std::move(d), std::move(alloc));
+                m_ctl = detail::create_ctl_block<T[]>(ptr, std::move(d), std::move(alloc));
                 m_ptr = ptr;
                 std::println("  - SharedPtr<T[]> initialized:");
                 std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
                 std::println("    - control block: {}", static_cast<void*>(m_ctl));
-                detail::incrementStrongRef(m_ctl);
+                detail::incr_strong_ref(m_ctl);
             }
         }
 
@@ -495,13 +495,13 @@ namespace sp {
                          static_cast<void*>(m_ptr),
                          static_cast<void*>(m_ctl),
                          m_ctl ? m_ctl->strongCount.load() : 0);
-            detail::releaseSharedRef(m_ctl);
+            detail::release_shared_ref(m_ctl);
         }
 
         constexpr SharedPtr(const SharedPtr& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("SharedPtr<T[]> copy constructor");
-            detail::incrementStrongRef(m_ctl);
+            detail::incr_strong_ref(m_ctl);
         }
 
         constexpr SharedPtr(SharedPtr&& other) noexcept :
@@ -542,7 +542,7 @@ namespace sp {
 
         [[nodiscard]] constexpr element_type* get() const noexcept { return m_ptr; }
         [[nodiscard]] constexpr operator bool() const noexcept { return m_ptr != nullptr; }
-        [[nodiscard]] constexpr long strongCount() const noexcept {
+        [[nodiscard]] constexpr long strong_count() const noexcept {
             return m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
         }
 
@@ -558,15 +558,15 @@ namespace sp {
         constexpr SharedPtr(element_type* ptr, detail::IControlBlockBase* ctl) noexcept :
             m_ptr(ptr), m_ctl(ctl) {
             std::println("SharedPtr<T[]> private constructor");
-            detail::incrementStrongRef(m_ctl);
+            detail::incr_strong_ref(m_ctl);
         }
 
         template<typename U>
-        friend constexpr SharedPtr<U[]> detail::makeSharedArrayImpl(size_t size);
+        friend constexpr SharedPtr<U[]> detail::make_shared_array_impl(size_t size);
 
         template<typename U, typename Alloc>
-        friend constexpr SharedPtr<U[]> detail::allocSharedArrayImpl(const Alloc& alloc,
-                                                                     size_t size);
+        friend constexpr SharedPtr<U[]> detail::alloc_shared_array_impl(const Alloc& alloc,
+                                                                        size_t size);
 
         friend class WeakPtr<element_type>;
     };
@@ -583,12 +583,12 @@ namespace sp {
             requires std::convertible_to<U*, element_type*>
             : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("WeakPtr constructor from SharedPtr");
-            detail::incrementWeakRef(m_ctl);
+            detail::incr_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("WeakPtr copy constructor");
-            detail::incrementWeakRef(m_ctl);
+            detail::incr_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr(WeakPtr&& other) noexcept :
@@ -601,7 +601,7 @@ namespace sp {
                          static_cast<void*>(m_ptr),
                          static_cast<void*>(m_ctl),
                          m_ctl ? m_ctl->weakCount.load() : 0);
-            detail::releaseWeakRef(m_ctl);
+            detail::release_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr& operator=(const WeakPtr& other) noexcept {
@@ -618,19 +618,19 @@ namespace sp {
 
         [[nodiscard]] constexpr SharedPtr<T> lock() const noexcept {
             std::println("WeakPtr::lock() attempt");
-            auto result = detail::weakPtrLockImpl(m_ptr, m_ctl);
+            auto result = detail::weak_ptr_lock_impl(m_ptr, m_ctl);
             std::println("WeakPtr::lock() result - {}", result ? "success" : "failed");
             return result;
         }
 
-        [[nodiscard]] constexpr long strongCount() const noexcept {
+        [[nodiscard]] constexpr long strong_count() const noexcept {
             auto count = m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
-            std::println("WeakPtr::strongCount() = {}", count);
+            std::println("WeakPtr::strong_count() = {}", count);
             return count;
         }
 
         [[nodiscard]] constexpr bool expired() const noexcept {
-            bool exp = strongCount() == 0;
+            bool exp = strong_count() == 0;
             std::println("WeakPtr::expired() = {}", exp);
             return exp;
         }
@@ -659,12 +659,12 @@ namespace sp {
         constexpr WeakPtr(const SharedPtr<T[]>& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("WeakPtr<T[]> constructor from SharedPtr<T[]>");
-            detail::incrementWeakRef(m_ctl);
+            detail::incr_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("WeakPtr<T[]> copy constructor");
-            detail::incrementWeakRef(m_ctl);
+            detail::incr_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr(WeakPtr&& other) noexcept :
@@ -677,7 +677,7 @@ namespace sp {
                          static_cast<void*>(m_ptr),
                          static_cast<void*>(m_ctl),
                          m_ctl ? m_ctl->weakCount.load() : 0);
-            detail::releaseWeakRef(m_ctl);
+            detail::release_weak_ref(m_ctl);
         }
 
         constexpr WeakPtr& operator=(const WeakPtr& other) noexcept {
@@ -694,19 +694,19 @@ namespace sp {
 
         [[nodiscard]] constexpr SharedPtr<T[]> lock() const noexcept {
             std::println("WeakPtr<T[]>::lock() attempt");
-            auto result = detail::weakPtrLockImpl(m_ptr, m_ctl);
+            auto result = detail::weak_ptr_lock_impl(m_ptr, m_ctl);
             std::println("WeakPtr<T[]>::lock() result - {}", result ? "success" : "failed");
             return result;
         }
 
-        [[nodiscard]] constexpr long strongCount() const noexcept {
+        [[nodiscard]] constexpr long strong_count() const noexcept {
             auto count = m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
-            std::println("WeakPtr<T[]>::strongCount() = {}", count);
+            std::println("WeakPtr<T[]>::strong_count() = {}", count);
             return count;
         }
 
         [[nodiscard]] constexpr bool expired() const noexcept {
-            bool exp = strongCount() == 0;
+            bool exp = strong_count() == 0;
             std::println("WeakPtr<T[]>::expired() = {}", exp);
             return exp;
         }
@@ -723,22 +723,22 @@ namespace sp {
     };
 
     template<typename T, typename... Args>
-    [[nodiscard]] constexpr SharedPtr<T> makeShared(Args&&... args) {
-        return detail::makeSharedImpl<T>(args...);
+    [[nodiscard]] constexpr SharedPtr<T> make_shared(Args&&... args) {
+        return detail::make_shared_impl<T>(args...);
     }
 
     template<typename T, typename Alloc, typename... Args>
-    [[nodiscard]] constexpr SharedPtr<T> allocateShared(const Alloc& alloc, Args&&... args) {
-        return detail::allocSharedImpl<T>(alloc, args...);
+    [[nodiscard]] constexpr SharedPtr<T> allocated_shared(const Alloc& alloc, Args&&... args) {
+        return detail::alloc_shared_impl<T>(alloc, args...);
     }
 
     template<typename T>
-    [[nodiscard]] constexpr SharedPtr<T[]> makeSharedArray(size_t size) {
-        return detail::makeSharedArrayImpl<T>(size);
+    [[nodiscard]] constexpr SharedPtr<T[]> make_shared_array(size_t size) {
+        return detail::make_shared_array_impl<T>(size);
     }
 
     template<typename T, typename Alloc>
-    [[nodiscard]] constexpr SharedPtr<T[]> allocateSharedArray(const Alloc& alloc, size_t size) {
-        return detail::allocSharedArrayImpl<T>(alloc, size);
+    [[nodiscard]] constexpr SharedPtr<T[]> allocate_shared_array(const Alloc& alloc, size_t size) {
+        return detail::alloc_shared_array_impl<T>(alloc, size);
     }
 } // namespace sp
