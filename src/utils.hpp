@@ -15,17 +15,27 @@
 namespace testing {
     namespace detail {
         template<typename T>
+        concept Formattable = requires(const T& value) {
+            { std::format("{}", value) } -> std::convertible_to<std::string>;
+        };
+
+        template<typename T>
+        concept Streamable = requires(const T& value, std::ostream& os) {
+            { os << value } -> std::same_as<std::ostream&>;
+        };
+
+        template<typename T>
         [[nodiscard]] auto format_value(const T& value) -> std::string {
             if constexpr (std::is_pointer_v<std::remove_cvref_t<T>>) {
                 if (value == nullptr) {
                     return "nullptr";
                 }
                 return std::format("0x{:016x}", reinterpret_cast<uintptr_t>(value));
-            } else if constexpr (requires { std::format("{}", value); }) {
+            } else if constexpr (Formattable<T>) {
                 return std::format("{}", value);
             } else {
                 std::ostringstream oss;
-                if constexpr (requires { oss << value; }) {
+                if constexpr (Streamable<T>) {
                     oss << value;
                     return oss.str();
                 }
@@ -40,11 +50,10 @@ namespace testing {
             constexpr operator std::string_view() const { return {chars, N - 1}; }
             [[nodiscard]] constexpr std::string_view view() const { return {chars, N - 1}; }
         };
-    } // namespace detail
+    }  // namespace detail
 
-    [[noreturn]] inline void
-    fail(std::string_view message,
-         const std::source_location& loc = std::source_location::current()) {
+    [[noreturn]] inline void fail(std::string_view message, const std::source_location& loc =
+                                                                std::source_location::current()) {
         std::println("\n\033[31mAssertion failed!\033[0m");
         std::println("  Location: {}:{}", loc.file_name(), loc.line());
         std::println("  Function: {}", loc.function_name());
@@ -168,13 +177,10 @@ namespace testing {
             std::free(ptr);
         }
     };
-} // namespace testing
+}  // namespace testing
 
-// clang-format off
-#define TEST_CASE(name)                            \
-    void name();                                   \
-    [[maybe_unused]]                               \
-    inline const auto _register_##name =           \
-        testing::TestRegistrar<#name, &name>{};    \
+#define TEST_CASE(name)                                                          \
+    void name();                                                                 \
+    [[maybe_unused]]                                                             \
+    inline const auto _register_##name = testing::TestRegistrar<#name, &name>{}; \
     void name()
-// clang-format on
