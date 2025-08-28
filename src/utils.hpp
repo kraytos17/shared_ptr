@@ -146,8 +146,8 @@ namespace testing {
     };
 
     struct AllocationTracker {
-        static inline std::atomic<int> allocations{0};
-        static inline std::atomic<int> deallocations{0};
+        static inline std::atomic_int allocations{0};
+        static inline std::atomic_int deallocations{0};
 
         static void reset() {
             allocations = 0;

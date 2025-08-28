@@ -9,23 +9,6 @@
 #include <utility>
 
 namespace sp {
-    // Public tags for disambiguating constructors
-
-    /// @brief Tag type for constructing from raw pointer
-    struct from_raw_ptr_tag {};
-    /// @brief Tag type for constructing from raw pointer with deleter
-    struct from_raw_ptr_with_deleter_tag {};
-    /// @brief Tag type for constructing from raw pointer with deleter and allocator
-    struct from_raw_ptr_with_deleter_alloc_tag {};
-    /// @brief Tag type for constructing with default parameters
-    struct with_defaults_tag {};
-
-    /// @brief Tag instances for constructor disambiguation
-    inline constexpr from_raw_ptr_tag from_raw_ptr{};
-    inline constexpr from_raw_ptr_with_deleter_tag from_raw_ptr_with_deleter{};
-    inline constexpr from_raw_ptr_with_deleter_alloc_tag from_raw_ptr_with_deleter_alloc{};
-    inline constexpr with_defaults_tag with_defaults{};
-
     /// @brief Forward declaration of SharedPtr
     template<typename T>
     class SharedPtr;
@@ -363,35 +346,54 @@ namespace sp {
             }
         }
 
-        /**
-         * @brief Create a control block for a managed object
-         * @tparam T Managed type
-         * @tparam U Pointer type (must be convertible to T*)
-         * @tparam Deleter Deleter type
-         * @tparam Alloc Allocator type
-         * @param ptr Pointer to manage
-         * @param d Deleter to use
-         * @param alloc Allocator to use
-         * @return Pointer to the created control block
-         */
         template<typename T, typename U, typename Deleter, typename Alloc>
-        constexpr IControlBlockBase* create_ctl_block(U* ptr, Deleter&& d, Alloc&& alloc) {
+        constexpr IControlBlockBase* create_ctl_block_array(U* ptr, Deleter&& d, Alloc&& alloc) {
             if (!ptr) {
                 return nullptr;
             }
 
-            using Block = std::conditional_t<
-                std::is_array_v<T>,
-                ControlBlockPtr<T[], std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>,
-                ControlBlockPtr<T, std::remove_cv_t<Deleter>, std::remove_cv_t<Alloc>>>;
+            using RawAlloc = std::remove_cvref_t<Alloc>;
+            using RawDeleter = std::remove_cvref_t<Deleter>;
+            using Block = ControlBlockPtr<T[], RawDeleter, RawAlloc>;
 
-            using BlockAlloc = typename std::allocator_traits<
-                std::remove_cv_t<Alloc>>::template rebind_alloc<Block>;
+            using BlockAlloc =
+                typename std::allocator_traits<RawAlloc>::template rebind_alloc<Block>;
             BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
 
             auto* block = blockAlloc.allocate(1);
-            std::construct_at(block, ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc));
-            return block;
+
+            try {
+                std::construct_at(block, ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc));
+                return block;
+            } catch (...) {
+                blockAlloc.deallocate(block, 1);
+                throw;
+            }
+        }
+
+        template<typename T, typename U, typename Deleter, typename Alloc>
+        constexpr IControlBlockBase* create_ctl_block_single(U* ptr, Deleter&& d, Alloc&& alloc) {
+            if (!ptr) {
+                return nullptr;
+            }
+
+            using RawAlloc = std::remove_cvref_t<Alloc>;
+            using RawDeleter = std::remove_cvref_t<Deleter>;
+            using Block = ControlBlockPtr<T, RawDeleter, RawAlloc>;
+
+            using BlockAlloc =
+                typename std::allocator_traits<RawAlloc>::template rebind_alloc<Block>;
+            BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
+
+            auto* block = blockAlloc.allocate(1);
+
+            try {
+                std::construct_at(block, ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc));
+                return block;
+            } catch (...) {
+                blockAlloc.deallocate(block, 1);
+                throw;
+            }
         }
 
         /**
@@ -490,7 +492,6 @@ namespace sp {
 
             using ElementAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
             using Deleter = ArrayDeleter<T, ElementAlloc>;
-            using Block = ControlBlockPtr<T[], Deleter, Alloc>;
 
             ElementAlloc elementAlloc(alloc);
             T* ptr = std::allocator_traits<ElementAlloc>::allocate(elementAlloc, size);
@@ -498,20 +499,11 @@ namespace sp {
 
             try {
                 std::uninitialized_default_construct_n(ptr, size);
+                constructed = size;
                 Deleter deleter{elementAlloc, size};
 
-                using BlockAlloc =
-                    typename std::allocator_traits<Alloc>::template rebind_alloc<Block>;
-                BlockAlloc blockAlloc(alloc);
-                auto* block = blockAlloc.allocate(1);
-
-                try {
-                    std::construct_at(block, ptr, deleter, alloc);
-                    return SharedPtr<T[]>(ptr, block);
-                } catch (...) {
-                    blockAlloc.deallocate(block, 1);
-                    throw;
-                }
+                auto* block = detail::create_ctl_block_array<T>(ptr, deleter, alloc);
+                return SharedPtr<T[]>(ptr, block);
             } catch (...) {
                 std::destroy_n(ptr, constructed);
                 std::allocator_traits<ElementAlloc>::deallocate(elementAlloc, ptr, size);
@@ -529,6 +521,16 @@ namespace sp {
         [[nodiscard]] constexpr SharedPtr<T[]> make_shared_array_impl(size_t size) {
             return alloc_shared_array_impl<T>(std::allocator<T>{}, size);
         }
+
+        template<class D, class U>
+        concept DeleterFor = requires(D d, U* u) {
+            { d(u) } -> std::same_as<void>;
+        };
+
+        template<class A, class U>
+        concept AllocatorFor =
+            requires(A a) { typename std::allocator_traits<A>::template rebind_alloc<U>; };
+
     }  // namespace detail
 
     /**
@@ -546,52 +548,29 @@ namespace sp {
         /// @brief Construct from nullptr
         constexpr SharedPtr(std::nullptr_t) noexcept {}
 
-        /**
-         * @brief Construct from raw pointer
-         * @tparam U Type convertible to T
-         * @param from_raw_ptr Tag parameter
-         * @param ptr Raw pointer to manage
-         */
+        /// @brief Construct from raw pointer
         template<typename U>
             requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
-        explicit SharedPtr(from_raw_ptr_tag, U* ptr) :
-            SharedPtr(from_raw_ptr_with_deleter, ptr, std::default_delete<U>{},
-                      std::allocator<U>{}) {}
+        explicit SharedPtr(U* ptr) :
+            SharedPtr(ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
 
-        /**
-         * @brief Construct from raw pointer with deleter
-         * @tparam U Type convertible to T
-         * @tparam Deleter Deleter type
-         * @param from_raw_ptr_with_deleter Tag parameter
-         * @param ptr Raw pointer to manage
-         * @param d Deleter to use
-         */
+        /// @brief Construct from raw pointer with deleter
         template<typename U, typename Deleter>
-        SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d)
-            requires std::convertible_to<U*, element_type*>
-            : SharedPtr(from_raw_ptr_with_deleter, ptr, std::move(d), std::allocator<U>{}) {}
+            requires std::convertible_to<U*, element_type*> && detail::DeleterFor<Deleter, U>
+        SharedPtr(U* ptr, Deleter d) : SharedPtr(ptr, std::move(d), std::allocator<U>{}) {}
 
-        /**
-         * @brief Construct from raw pointer with deleter and allocator
-         * @tparam U Type convertible to T
-         * @tparam Deleter Deleter type
-         * @tparam Alloc Allocator type
-         * @param from_raw_ptr_with_deleter Tag parameter
-         * @param ptr Raw pointer to manage
-         * @param d Deleter to use
-         * @param alloc Allocator to use
-         */
+        /// @brief Construct from raw pointer with deleter and allocator
         template<typename U, typename Deleter, typename Alloc>
-        SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d, Alloc alloc)
-            requires std::convertible_to<U*, element_type*> && std::invocable<Deleter&, U*>
-        {
-            std::println("\nSharedPtr(from_raw_ptr_with_deleter_tag) constructor:");
+            requires std::convertible_to<U*, element_type*> && detail::DeleterFor<Deleter, U> &&
+                     detail::AllocatorFor<Alloc, U>
+        SharedPtr(U* ptr, Deleter d, Alloc alloc) {
+            std::println("\nSharedPtr(ptr, deleter, allocator) constructor:");
             std::println("  - raw ptr: {}", static_cast<void*>(ptr));
             std::println("  - deleter type: {}", typeid(Deleter).name());
             std::println("  - incoming deleter address: {}", static_cast<void*>(&d));
 
             if (ptr) {
-                m_ctl = detail::create_ctl_block<T>(ptr, std::move(d), std::move(alloc));
+                m_ctl = detail::create_ctl_block_single<T>(ptr, std::move(d), std::move(alloc));
                 m_ptr = ptr;
                 std::println("  - SharedPtr initialized:");
                 std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
@@ -612,30 +591,20 @@ namespace sp {
             detail::release_shared_ref(m_ctl);
         }
 
-        /**
-         * @brief Copy constructor
-         * @param other SharedPtr to copy from
-         */
+        /// @brief Copy constructor
         constexpr SharedPtr(const SharedPtr& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             std::println("SharedPtr copy constructor - incrementing ref count");
             detail::incr_strong_ref(m_ctl);
         }
 
-        /**
-         * @brief Move constructor
-         * @param other SharedPtr to move from
-         */
+        /// @brief Move constructor
         constexpr SharedPtr(SharedPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
             std::println("SharedPtr move constructor");
         }
 
-        /**
-         * @brief Copy assignment operator
-         * @param other SharedPtr to copy from
-         * @return Reference to this SharedPtr
-         */
+        /// @brief Copy assignment
         SharedPtr& operator=(const SharedPtr& other) noexcept {
             std::println("SharedPtr copy assignment");
             if (this != &other) {
@@ -647,11 +616,7 @@ namespace sp {
             return *this;
         }
 
-        /**
-         * @brief Move assignment operator
-         * @param other SharedPtr to move from
-         * @return Reference to this SharedPtr
-         */
+        /// @brief Move assignment
         SharedPtr& operator=(SharedPtr&& other) noexcept {
             std::println("SharedPtr move assignment");
             SharedPtr(std::move(other)).swap(*this);
@@ -779,22 +744,23 @@ namespace sp {
          * @tparam U Array element type (must be same as T)
          * @tparam Deleter Deleter type (defaults to std::default_delete<U[]>)
          * @tparam Alloc Allocator type (defaults to std::allocator<U>)
-         * @param from_raw_ptr_with_deleter Tag parameter
          * @param ptr Raw pointer to manage
          * @param d Deleter to use
          * @param alloc Allocator to use
          */
         template<typename U, typename Deleter = std::default_delete<U[]>,
                  typename Alloc = std::allocator<U>>
-        explicit SharedPtr(from_raw_ptr_with_deleter_tag, U* ptr, Deleter d = {}, Alloc alloc = {})
+        explicit SharedPtr(U* ptr, Deleter d = {}, Alloc alloc = {})
             requires std::same_as<U, element_type>
         {
-            std::println("\nSharedPtr<T[]>(from_raw_ptr_with_deleter_tag) constructor:");
+            std::println("\nSharedPtr<T[]>(ptr, deleter, allocator) constructor:");
             std::println("  - raw ptr: {}", static_cast<void*>(ptr));
             std::println("  - deleter type: {}", typeid(Deleter).name());
 
             if (ptr) {
-                m_ctl = detail::create_ctl_block<T[]>(ptr, std::move(d), std::move(alloc));
+                m_ctl = detail::create_ctl_block_array<element_type>(
+                    ptr, std::move(d), std::move(alloc));
+
                 m_ptr = ptr;
                 std::println("  - SharedPtr<T[]> initialized:");
                 std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
@@ -1190,7 +1156,7 @@ namespace sp {
      */
     template<typename T, typename... Args>
     [[nodiscard]] constexpr SharedPtr<T> make_shared(Args&&... args) {
-        return detail::make_shared_impl<T>(args...);
+        return detail::make_shared_impl<T>(std::forward<Args>(args)...);
     }
 
     /**
@@ -1204,7 +1170,7 @@ namespace sp {
      */
     template<typename T, typename Alloc, typename... Args>
     [[nodiscard]] constexpr SharedPtr<T> allocated_shared(const Alloc& alloc, Args&&... args) {
-        return detail::alloc_shared_impl<T>(alloc, args...);
+        return detail::alloc_shared_impl<T>(alloc, std::forward<Args>(args)...);
     }
 
     /**

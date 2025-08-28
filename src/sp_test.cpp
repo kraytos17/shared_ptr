@@ -1,4 +1,5 @@
 #include "sp.hpp"
+
 #include <atomic>
 #include <barrier>
 #include <functional>
@@ -6,6 +7,7 @@
 #include <ranges>
 #include <thread>
 #include <vector>
+
 #include "utils.hpp"
 
 namespace views = std::views;
@@ -140,7 +142,8 @@ TEST_CASE(custom_deleter) {
     };
 
     {
-        sp::SharedPtr<int> ptr(sp::from_raw_ptr_with_deleter, new int(42), deleter);
+        // sp::SharedPtr<int> ptr(sp::from_raw_ptr_with_deleter, new int(42), deleter);
+        sp::SharedPtr<int> ptr(new int(42), deleter);
         testing::assert_that<"Deleter should not be called before SharedPtr destruction">(!deleted);
     }
     testing::assert_that<"Custom deleter was not invoked">(deleted);
