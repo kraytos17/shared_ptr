@@ -16,7 +16,7 @@ TEST_CASE(default_constructor) {
     sp::SharedPtr<int> ptr;
     testing::assert_that<"Default constructed SharedPtr should be null">(!ptr);
     testing::assert_eq<"ptr.get()", "nullptr">(ptr.get(), nullptr);
-    testing::assert_eq<"ptr.strong_count()", "0">(ptr.strong_count(), 0);
+    testing::assert_eq<"ptr.strong_count()", "0">(ptr.strong_count(), 0uz);
 }
 
 TEST_CASE(make_shared_construction) {
@@ -25,7 +25,7 @@ TEST_CASE(make_shared_construction) {
         auto ptr = sp::make_shared<int>(42);
         testing::assert_that<"make_shared returned null">(ptr);
         testing::assert_eq<"*ptr", "42">(*ptr, 42);
-        testing::assert_eq<"ptr.strong_count()", "1">(ptr.strong_count(), 1);
+        testing::assert_eq<"ptr.strong_count()", "1">(ptr.strong_count(), 1uz);
         testing::assert_that<"Too many allocations">(
             testing::AllocationTracker::allocations <= 3,
             testing::detail::format_value(testing::AllocationTracker::allocations.load()));
@@ -38,14 +38,14 @@ TEST_CASE(copy_semantics) {
     {
         sp::SharedPtr<int> ptr2(ptr1);
         testing::assert_eq<"ptr1.get()", "ptr2.get()">(ptr1.get(), ptr2.get());
-        testing::assert_eq<"ptr1.strong_count()", "2">(ptr1.strong_count(), 2);
-        testing::assert_eq<"ptr2.strong_count()", "2">(ptr2.strong_count(), 2);
+        testing::assert_eq<"ptr1.strong_count()", "2">(ptr1.strong_count(), 2uz);
+        testing::assert_eq<"ptr2.strong_count()", "2">(ptr2.strong_count(), 2uz);
 
         sp::SharedPtr<int> ptr3;
         ptr3 = ptr2;
-        testing::assert_eq<"ptr1.strong_count()", "3">(ptr1.strong_count(), 3);
+        testing::assert_eq<"ptr1.strong_count()", "3">(ptr1.strong_count(), 3uz);
     }
-    testing::assert_eq<"ptr1.strong_count()", "1">(ptr1.strong_count(), 1);
+    testing::assert_eq<"ptr1.strong_count()", "1">(ptr1.strong_count(), 1uz);
 }
 
 TEST_CASE(move_semantics) {
@@ -53,16 +53,16 @@ TEST_CASE(move_semantics) {
     {
         sp::SharedPtr<int> ptr2(std::move(ptr1));
         testing::assert_that<"Moved-from pointer should be null">(!ptr1);
-        testing::assert_eq<"ptr1.strong_count()", "0">(ptr1.strong_count(), 0);
+        testing::assert_eq<"ptr1.strong_count()", "0">(ptr1.strong_count(), 0uz);
         testing::assert_that<"ptr2 should be valid">(ptr2);
         testing::assert_eq<"*ptr2", "42">(*ptr2, 42);
-        testing::assert_eq<"ptr2.strong_count()", "1">(ptr2.strong_count(), 1);
+        testing::assert_eq<"ptr2.strong_count()", "1">(ptr2.strong_count(), 1uz);
 
         sp::SharedPtr<int> ptr3;
         ptr3 = std::move(ptr2);
         testing::assert_that<"ptr2 should be null after move">(!ptr2);
         testing::assert_that<"ptr3 should be valid">(ptr3);
-        testing::assert_eq<"ptr3.strong_count()", "1">(ptr3.strong_count(), 1);
+        testing::assert_eq<"ptr3.strong_count()", "1">(ptr3.strong_count(), 1uz);
     }
 }
 
@@ -71,11 +71,11 @@ TEST_CASE(weak_ptr_functionality) {
     sp::WeakPtr<int> weak(shared);
 
     testing::assert_that<"WeakPtr should not be expired">(!weak.expired());
-    testing::assert_eq<"weak.strong_count()", "1">(weak.strong_count(), 1);
+    testing::assert_eq<"weak.strong_count()", "1">(weak.strong_count(), 1uz);
 
     if (auto locked = weak.lock()) {
         testing::assert_eq<"*locked", "42">(*locked, 42);
-        testing::assert_eq<"shared.strong_count()", "2">(shared.strong_count(), 2);
+        testing::assert_eq<"shared.strong_count()", "2">(shared.strong_count(), 2uz);
     }
 
     shared.reset();
@@ -86,13 +86,13 @@ TEST_CASE(weak_ptr_functionality) {
 TEST_CASE(nullptr_construction) {
     sp::SharedPtr<int> ptr(nullptr);
     testing::assert_that<"Should be null">(!ptr);
-    testing::assert_eq<"Refcount should be 0", "0">(ptr.strong_count(), 0);
+    testing::assert_eq<"Refcount should be 0", "0">(ptr.strong_count(), 0uz);
 }
 
 TEST_CASE(zero_size_array) {
     auto arr = sp::make_shared_array<int>(0);
     testing::assert_that<"Should be null">(!arr);
-    testing::assert_eq<"Refcount should be 0", "0">(arr.strong_count(), 0);
+    testing::assert_eq<"Refcount should be 0", "0">(arr.strong_count(), 0uz);
 }
 
 TEST_CASE(thread_safety) {
@@ -140,7 +140,6 @@ TEST_CASE(custom_deleter) {
     };
 
     {
-        // sp::SharedPtr<int> ptr(sp::from_raw_ptr_with_deleter, new int(42), deleter);
         sp::SharedPtr<int> ptr(new int(42), deleter);
         testing::assert_that<"Deleter should not be called before SharedPtr destruction">(!deleted);
     }
@@ -325,7 +324,7 @@ TEST_CASE(control_block_sharing) {
     testing::assert_eq<"Both should have same refcount">(ptr1.strong_count(), ptr2.strong_count());
 
     ptr1.reset();
-    testing::assert_eq<"ptr2 should still have 1 ref">(ptr2.strong_count(), 1);
+    testing::assert_eq<"ptr2 should still have 1 ref">(ptr2.strong_count(), 1uz);
 }
 
 TEST_CASE(array_indexing) {
@@ -373,7 +372,7 @@ TEST_CASE(inheritance_support) {
         virtual ~Base() = default;
         virtual int value() const { return 1; }
     };
-    
+
     struct Derived : Base {
         int value() const override { return 2; }
     };
@@ -382,7 +381,7 @@ TEST_CASE(inheritance_support) {
     sp::SharedPtr<Base> base = derived;
 
     testing::assert_eq<"Base should point to Derived object", "2">(base->value(), 2);
-    testing::assert_eq<"Refcount should be shared", "2">(derived.strong_count(), 2);
+    testing::assert_eq<"Refcount should be shared", "2">(derived.strong_count(), 2uz);
 }
 
 // ==================== TEST RUNNER ====================

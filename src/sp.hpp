@@ -32,8 +32,8 @@ namespace sp {
          */
         class IControlBlockBase {
         public:
-            std::atomic_long strongCnt{0};  ///< Strong reference count
-            std::atomic_long weakCnt{0};  ///< Weak reference count
+            std::atomic_size_t strongCnt{0};  ///< Strong reference count
+            std::atomic_size_t weakCnt{0};  ///< Weak reference count
 
             virtual ~IControlBlockBase() = default;
 
@@ -129,8 +129,10 @@ namespace sp {
             }
 
         private:
-            alignas(
-                T) std::array<std::byte, sizeof(T)> m_storage;  ///< Storage for the managed object
+            // clang-format off
+            alignas(T) std::array<std::byte, sizeof(T)> m_storage;  ///< Storage for the managed object
+            // clang-format on
+
             [[no_unique_address]] Deleter m_deleter;  ///< The deleter object
             [[no_unique_address]] Alloc m_alloc;  ///< The allocator object
         };
@@ -157,15 +159,7 @@ namespace sp {
             /**
              * @brief Destroy the managed object
              */
-            constexpr void destroy_object() override {
-                try {
-                    m_deleter(m_ptr);
-                } catch (const std::exception&) {
-                    throw;
-                } catch (...) {
-                    throw;
-                }
-            }
+            constexpr void destroy_object() override { m_deleter(m_ptr); }
 
             /**
              * @brief Get the deleter or allocator
@@ -283,7 +277,8 @@ namespace sp {
          * @param ctl Control block pointer
          * @param counter Reference counter to increment
          */
-        inline constexpr void incr_ref(IControlBlockBase* ctl, std::atomic_long& counter) noexcept {
+        inline constexpr void incr_ref(IControlBlockBase* ctl,
+                                       std::atomic_size_t& counter) noexcept {
             if (ctl) {
                 counter.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -513,6 +508,12 @@ namespace sp {
             return alloc_shared_array_impl<T>(std::allocator<T>{}, size);
         }
 
+        template<typename From, typename To>
+        concept ConvertibleToPtr = std::convertible_to<From*, To*>;
+
+        template<typename T>
+        concept NotArray = !std::is_array_v<T>;
+
         template<class D, class U>
         concept DeleterFor = requires(D d, U* u) {
             { d(u) } -> std::same_as<void>;
@@ -559,7 +560,7 @@ namespace sp {
 
         [[nodiscard]] constexpr element_type* get() const noexcept { return m_ptr; }
         [[nodiscard]] constexpr operator bool() const noexcept { return m_ptr != nullptr; }
-        [[nodiscard]] constexpr long strong_count() const noexcept {
+        [[nodiscard]] constexpr size_t strong_count() const noexcept {
             return m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
         }
 
@@ -607,19 +608,19 @@ namespace sp {
 
         /// @brief Construct from raw pointer
         template<typename U>
-            requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
+            requires detail::ConvertibleToPtr<U*, element_type*> && detail::NotArray<U>
         explicit SharedPtr(U* ptr) :
             SharedPtr(ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
 
         /// @brief Construct from raw pointer with deleter
         template<typename U, typename Deleter>
-            requires std::convertible_to<U*, element_type*> && detail::DeleterFor<Deleter, U>
+            requires detail::ConvertibleToPtr<U*, element_type*> && detail::DeleterFor<Deleter, U>
         SharedPtr(U* ptr, Deleter d) : SharedPtr(ptr, std::move(d), std::allocator<U>{}) {}
 
         /// @brief Construct from raw pointer with deleter and allocator
         template<typename U, typename Deleter, typename Alloc>
-            requires std::convertible_to<U*, element_type*> && detail::DeleterFor<Deleter, U> &&
-                     detail::AllocatorFor<Alloc, U>
+            requires detail::ConvertibleToPtr<U*, element_type*> &&
+                     detail::DeleterFor<Deleter, U> && detail::AllocatorFor<Alloc, U>
         SharedPtr(U* ptr, Deleter d, Alloc alloc) {
             this->m_ctl = detail::create_ctl_block_single<T>(ptr, std::move(d), std::move(alloc));
             this->m_ptr = ptr;
@@ -627,11 +628,11 @@ namespace sp {
         }
 
         template<typename U>
-            requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
+            requires detail::ConvertibleToPtr<U, element_type> && detail::NotArray<U>
         SharedPtr(const SharedPtr<U>& other) noexcept : Base(other.get_ptr(), other.get_ctl()) {}
 
         template<typename U>
-            requires std::convertible_to<U*, element_type*> && (!std::is_array_v<U>)
+            requires detail::ConvertibleToPtr<U, element_type> && detail::NotArray<U>
         SharedPtr(SharedPtr<U>&& other) noexcept : Base(other.get_ptr(), other.get_ctl()) {
             other.m_ptr = nullptr;
             other.m_ctl = nullptr;
@@ -763,11 +764,11 @@ namespace sp {
             return *this;
         }
 
-        [[nodiscard]] constexpr long strong_count() const noexcept {
+        [[nodiscard]] constexpr size_t strong_count() const noexcept {
             return m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
         }
 
-        [[nodiscard]] constexpr long weak_count() const noexcept {
+        [[nodiscard]] constexpr size_t weak_count() const noexcept {
             return m_ctl ? m_ctl->weakCnt.load(std::memory_order_acquire) : 0;
         }
 
@@ -808,7 +809,7 @@ namespace sp {
 
         template<typename U>
         constexpr WeakPtr(const SharedPtr<U>& other) noexcept
-            requires std::convertible_to<U*, element_type*>
+            requires detail::ConvertibleToPtr<U*, element_type*>
             : Base(other) {}
     };
 
