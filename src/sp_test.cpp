@@ -283,6 +283,108 @@ TEST_CASE(allocator_with_array) {
                                                                        alloc.allocs());
 }
 
+TEST_CASE(move_semantics_additional) {
+    sp::SharedPtr<int> empty1;
+    sp::SharedPtr<int> empty2(std::move(empty1));
+    testing::assert_that<"Moved-from empty should stay null">(!empty1);
+    testing::assert_that<"Moved-to empty should stay null">(!empty2);
+
+    auto ptr = sp::make_shared<int>(42);
+    sp::SharedPtr<int>& ref = ptr;
+    ptr = std::move(ref);
+
+    testing::assert_that<"Move from reference should leave pointer valid">(ptr);
+    testing::assert_eq<"Value should be preserved", "42">(*ptr, 42);
+}
+
+TEST_CASE(weak_ptr_edge_cases) {
+    sp::SharedPtr<int> empty;
+    sp::WeakPtr<int> weak_from_empty(empty);
+    testing::assert_that<"Weak from empty should be expired">(weak_from_empty.expired());
+
+    auto shared = sp::make_shared<int>(42);
+    sp::WeakPtr<int> weak1(shared);
+    sp::WeakPtr<int> weak2(weak1);
+    testing::assert_eq<"Both weak pointers should have same count">(weak1.strong_count(),
+                                                                    weak2.strong_count());
+}
+
+TEST_CASE(deleter_access) {
+    auto deleter = [](int* p) { delete p; };
+    sp::SharedPtr<int> ptr(new int(42), deleter);
+
+    auto* retrieved_deleter = ptr.deleter<decltype(deleter)>();
+    testing::assert_that<"Should be able to retrieve deleter">(retrieved_deleter != nullptr);
+}
+
+TEST_CASE(control_block_sharing) {
+    auto ptr1 = sp::make_shared<int>(42);
+    auto ptr2 = ptr1;
+
+    testing::assert_eq<"Both should point to same object">(ptr1.get(), ptr2.get());
+    testing::assert_eq<"Both should have same refcount">(ptr1.strong_count(), ptr2.strong_count());
+
+    ptr1.reset();
+    testing::assert_eq<"ptr2 should still have 1 ref">(ptr2.strong_count(), 1);
+}
+
+TEST_CASE(array_indexing) {
+    auto arr = sp::make_shared_array<int>(3);
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+
+    testing::assert_eq<"arr[0]", "1">(arr[0], 1);
+    testing::assert_eq<"arr[1]", "2">(arr[1], 2);
+    testing::assert_eq<"arr[2]", "3">(arr[2], 3);
+
+    const auto& const_arr = arr;
+    testing::assert_eq<"const_arr[0]", "1">(const_arr[0], 1);
+}
+
+TEST_CASE(various_deleter_types) {
+    void (*func_deleter)(int*) = [](int* p) { delete p; };
+    sp::SharedPtr<int> ptr1(new int(42), func_deleter);
+
+    struct FunctorDeleter {
+        void operator()(int* p) const { delete p; }
+    };
+
+    sp::SharedPtr<int> ptr2(new int(42), FunctorDeleter{});
+
+    struct StatefulDeleter {
+        int* count;
+        void operator()(int* p) const {
+            delete p;
+            (*count)++;
+        }
+    };
+
+    int delete_count = 0;
+    {
+        sp::SharedPtr<int> ptr3(new int(42), StatefulDeleter{&delete_count});
+    }
+
+    testing::assert_eq<"Stateful deleter should be called", "1">(delete_count, 1);
+}
+
+TEST_CASE(inheritance_support) {
+    struct Base {
+        virtual ~Base() = default;
+        virtual int value() const { return 1; }
+    };
+    
+    struct Derived : Base {
+        int value() const override { return 2; }
+    };
+
+    sp::SharedPtr<Derived> derived = sp::make_shared<Derived>();
+    sp::SharedPtr<Base> base = derived;
+
+    testing::assert_eq<"Base should point to Derived object", "2">(base->value(), 2);
+    testing::assert_eq<"Refcount should be shared", "2">(derived.strong_count(), 2);
+}
+
 // ==================== TEST RUNNER ====================
 
 auto main() -> int {

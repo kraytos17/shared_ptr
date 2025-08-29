@@ -85,6 +85,18 @@ namespace testing {
         }
     }
 
+    template<detail::FixedString Message, typename Lhs, typename Rhs>
+    void assert_eq(Lhs&& lhs, Rhs&& rhs,
+                   const std::source_location& loc = std::source_location::current()) {
+        if (!(lhs == rhs)) {
+            fail(std::format("Assertion failed: {}\n  Values: {} != {}",
+                             Message.view(),
+                             detail::format_value(std::forward<Lhs>(lhs)),
+                             detail::format_value(std::forward<Rhs>(rhs))),
+                 loc);
+        }
+    }
+
     template<detail::FixedString LhsExpr, detail::FixedString RhsExpr, typename Lhs, typename Rhs>
     void assert_eq(Lhs&& lhs, Rhs&& rhs,
                    const std::source_location& loc = std::source_location::current()) {
