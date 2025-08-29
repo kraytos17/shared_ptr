@@ -12,8 +12,6 @@
 
 namespace views = std::views;
 
-// ==================== TEST IMPLEMENTATION ====================
-
 TEST_CASE(default_constructor) {
     sp::SharedPtr<int> ptr;
     testing::assert_that<"Default constructed SharedPtr should be null">(!ptr);

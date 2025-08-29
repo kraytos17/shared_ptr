@@ -3,10 +3,18 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
-#include <print>
 #include <type_traits>
 #include <typeinfo>
 #include <utility>
+
+#define SP_DEBUG 1
+
+#ifdef SP_DEBUG
+#include <print>
+#define SP_LOG(...) std::println(__VA_ARGS__)
+#else
+#define SP_LOG(...) (void) 0
+#endif
 
 namespace sp {
     /// @brief Forward declaration of SharedPtr
@@ -24,8 +32,8 @@ namespace sp {
          */
         class IControlBlockBase {
         public:
-            std::atomic_long strongCount{0};  ///< Strong reference count
-            std::atomic_long weakCount{0};  ///< Weak reference count
+            std::atomic_long strongCnt{0};  ///< Strong reference count
+            std::atomic_long weakCnt{0};  ///< Weak reference count
 
             virtual ~IControlBlockBase() = default;
 
@@ -100,6 +108,7 @@ namespace sp {
             constexpr void destroy_block() override {
                 using BlockAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<
                     ControlBlockDirect>;
+
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
             }
@@ -143,15 +152,15 @@ namespace sp {
              */
             constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
                 m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {
-                std::println("ControlBlockPtr created:");
-                std::println("  - ptr: {}", static_cast<void*>(m_ptr));
-                std::println("  - deleter type: {}", typeid(Deleter).name());
-                std::println("  - deleter address: {}", static_cast<void*>(&m_deleter));
-                std::println("  - initial strongCount: {}", strongCount.load());
-                std::println("  - initial weakCount: {}", weakCount.load());
+                SP_LOG("ControlBlockPtr created:");
+                SP_LOG("  - ptr: {}", static_cast<void*>(m_ptr));
+                SP_LOG("  - deleter type: {}", typeid(Deleter).name());
+                SP_LOG("  - deleter address: {}", static_cast<void*>(&m_deleter));
+                SP_LOG("  - initial strongCnt: {}", strongCnt.load());
+                SP_LOG("  - initial weakCnt: {}", weakCnt.load());
 
                 if constexpr (std::is_class_v<Deleter> && !std::is_final_v<Deleter>) {
-                    std::println("  - deleter appears to be a class type (possibly lambda)");
+                    SP_LOG("  - deleter appears to be a class type (possibly lambda)");
                 }
             }
 
@@ -159,19 +168,19 @@ namespace sp {
              * @brief Destroy the managed object
              */
             constexpr void destroy_object() override {
-                std::println("\nControlBlockPtr::destroy_object():");
-                std::println("  - ptr: {}", static_cast<void*>(m_ptr));
-                std::println("  - current deleter address: {}", static_cast<void*>(&m_deleter));
-                std::println("  - calling deleter...");
+                SP_LOG("\nControlBlockPtr::destroy_object():");
+                SP_LOG("  - ptr: {}", static_cast<void*>(m_ptr));
+                SP_LOG("  - current deleter address: {}", static_cast<void*>(&m_deleter));
+                SP_LOG("  - calling deleter...");
 
                 try {
                     m_deleter(m_ptr);
-                    std::println("  - deleter completed successfully");
+                    SP_LOG("  - deleter completed successfully");
                 } catch (const std::exception& e) {
-                    std::println("  - deleter threw exception: {}", e.what());
+                    SP_LOG("  - deleter threw exception: {}", e.what());
                     throw;
                 } catch (...) {
-                    std::println("  - deleter threw unknown exception");
+                    SP_LOG("  - deleter threw unknown exception");
                     throw;
                 }
             }
@@ -182,7 +191,7 @@ namespace sp {
              * @return Pointer to the component or nullptr if not found
              */
             constexpr void* deleter(const std::type_info& type) const noexcept override {
-                std::println("ControlBlockPtr::deleter() - type query: {}", type.name());
+                SP_LOG("ControlBlockPtr::deleter() - type query: {}", type.name());
                 if (type == typeid(Deleter)) {
                     return const_cast<Deleter*>(&m_deleter);
                 }
@@ -196,13 +205,13 @@ namespace sp {
              * @brief Destroy the control block
              */
             constexpr void destroy_block() override {
-                std::println("ControlBlockPtr::destroy_block() - ptr={}",
-                             static_cast<void*>(m_ptr));
+                SP_LOG("ControlBlockPtr::destroy_block() - ptr={}", static_cast<void*>(m_ptr));
                 using BlockAlloc =
                     typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
-                std::println("ControlBlockPtr::destroy_block() - completed");
+                SP_LOG("ControlBlockPtr::destroy_block() - completed");
             }
 
             /**
@@ -267,6 +276,7 @@ namespace sp {
             constexpr void destroy_block() override {
                 using BlockAlloc =
                     typename std::allocator_traits<Alloc>::template rebind_alloc<ControlBlockPtr>;
+
                 BlockAlloc blockAlloc(m_alloc);
                 std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, this, 1);
             }
@@ -305,7 +315,7 @@ namespace sp {
          * @param ctl Control block pointer
          */
         inline constexpr void incr_strong_ref(IControlBlockBase* ctl) noexcept {
-            incr_ref(ctl, ctl->strongCount);
+            incr_ref(ctl, ctl->strongCnt);
         }
 
         /**
@@ -313,7 +323,7 @@ namespace sp {
          * @param ctl Control block pointer
          */
         inline constexpr void incr_weak_ref(IControlBlockBase* ctl) noexcept {
-            incr_ref(ctl, ctl->weakCount);
+            incr_ref(ctl, ctl->weakCnt);
         }
 
         /**
@@ -325,10 +335,10 @@ namespace sp {
                 return;
             }
 
-            auto oldCount = ctl->strongCount.fetch_sub(1, std::memory_order_acq_rel);
+            auto oldCount = ctl->strongCnt.fetch_sub(1, std::memory_order_acq_rel);
             if (oldCount == 1) {
                 ctl->destroy_object();
-                if (ctl->weakCount.load(std::memory_order_acquire) == 0) {
+                if (ctl->weakCnt.load(std::memory_order_acquire) == 0) {
                     ctl->destroy_block();
                 }
             }
@@ -339,8 +349,8 @@ namespace sp {
          * @param ctl Control block pointer
          */
         inline constexpr void release_weak_ref(IControlBlockBase* ctl) noexcept {
-            if (ctl && ctl->weakCount.fetch_sub(1, std::memory_order_release) == 1) {
-                if (ctl->strongCount.load(std::memory_order_acquire) == 0) {
+            if (ctl && ctl->weakCnt.fetch_sub(1, std::memory_order_release) == 1) {
+                if (ctl->strongCnt.load(std::memory_order_acquire) == 0) {
                     ctl->destroy_block();
                 }
             }
@@ -355,11 +365,10 @@ namespace sp {
             using RawAlloc = std::remove_cvref_t<Alloc>;
             using RawDeleter = std::remove_cvref_t<Deleter>;
             using Block = ControlBlockPtr<T[], RawDeleter, RawAlloc>;
-
             using BlockAlloc =
                 typename std::allocator_traits<RawAlloc>::template rebind_alloc<Block>;
-            BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
 
+            BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
             auto* block = blockAlloc.allocate(1);
 
             try {
@@ -380,11 +389,10 @@ namespace sp {
             using RawAlloc = std::remove_cvref_t<Alloc>;
             using RawDeleter = std::remove_cvref_t<Deleter>;
             using Block = ControlBlockPtr<T, RawDeleter, RawAlloc>;
-
             using BlockAlloc =
                 typename std::allocator_traits<RawAlloc>::template rebind_alloc<Block>;
-            BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
 
+            BlockAlloc blockAlloc(std::forward<Alloc>(alloc));
             auto* block = blockAlloc.allocate(1);
 
             try {
@@ -407,9 +415,9 @@ namespace sp {
         constexpr SharedPtr<T> weak_ptr_lock_impl(T* ptr, IControlBlockBase* ctl) noexcept {
             SharedPtr<T> result;
             if (ctl) {
-                auto count = ctl->strongCount.load(std::memory_order_acquire);
+                auto count = ctl->strongCnt.load(std::memory_order_acquire);
                 while (count != 0) {
-                    if (ctl->strongCount.compare_exchange_weak(count,
+                    if (ctl->strongCnt.compare_exchange_weak(count,
                                                                count + 1,
                                                                std::memory_order_acq_rel,
                                                                std::memory_order_relaxed)) {
@@ -564,49 +572,47 @@ namespace sp {
             requires std::convertible_to<U*, element_type*> && detail::DeleterFor<Deleter, U> &&
                      detail::AllocatorFor<Alloc, U>
         SharedPtr(U* ptr, Deleter d, Alloc alloc) {
-            std::println("\nSharedPtr(ptr, deleter, allocator) constructor:");
-            std::println("  - raw ptr: {}", static_cast<void*>(ptr));
-            std::println("  - deleter type: {}", typeid(Deleter).name());
-            std::println("  - incoming deleter address: {}", static_cast<void*>(&d));
+            SP_LOG("\nSharedPtr(ptr, deleter, allocator) constructor:");
+            SP_LOG("  - raw ptr: {}", static_cast<void*>(ptr));
+            SP_LOG("  - deleter type: {}", typeid(Deleter).name());
+            SP_LOG("  - incoming deleter address: {}", static_cast<void*>(&d));
 
             if (ptr) {
                 m_ctl = detail::create_ctl_block_single<T>(ptr, std::move(d), std::move(alloc));
                 m_ptr = ptr;
-                std::println("  - SharedPtr initialized:");
-                std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
-                std::println("    - control block: {}", static_cast<void*>(m_ctl));
-                std::println("    - initial strongCount: {}", m_ctl->strongCount.load());
+                SP_LOG("  - SharedPtr initialized:");
+                SP_LOG("    - stored ptr: {}", static_cast<void*>(m_ptr));
+                SP_LOG("    - control block: {}", static_cast<void*>(m_ctl));
+                SP_LOG("    - initial strongCnt: {}", m_ctl->strongCnt.load());
                 detail::incr_strong_ref(m_ctl);
             } else {
-                std::println("  - nullptr input, creating empty SharedPtr");
+                SP_LOG("  - nullptr input, creating empty SharedPtr");
             }
         }
 
         /// @brief Destructor
         ~SharedPtr() {
-            std::println("~SharedPtr() - ptr={}, ctl={}, strongCount={}",
-                         static_cast<void*>(m_ptr),
-                         static_cast<void*>(m_ctl),
-                         m_ctl ? m_ctl->strongCount.load() : 0);
+            SP_LOG("~SharedPtr() - ptr={}, ctl={}, strongCnt={}",
+                   static_cast<void*>(m_ptr),
+                   static_cast<void*>(m_ctl),
+                   m_ctl ? m_ctl->strongCnt.load() : 0);
+
             detail::release_shared_ref(m_ctl);
         }
 
         /// @brief Copy constructor
         constexpr SharedPtr(const SharedPtr& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("SharedPtr copy constructor - incrementing ref count");
             detail::incr_strong_ref(m_ctl);
         }
 
         /// @brief Move constructor
         constexpr SharedPtr(SharedPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-            std::println("SharedPtr move constructor");
         }
 
         /// @brief Copy assignment
         SharedPtr& operator=(const SharedPtr& other) noexcept {
-            std::println("SharedPtr copy assignment");
             if (this != &other) {
                 detail::release_shared_ref(m_ctl);
                 m_ptr = other.m_ptr;
@@ -618,7 +624,6 @@ namespace sp {
 
         /// @brief Move assignment
         SharedPtr& operator=(SharedPtr&& other) noexcept {
-            std::println("SharedPtr move assignment");
             SharedPtr(std::move(other)).swap(*this);
             return *this;
         }
@@ -652,16 +657,13 @@ namespace sp {
          * @return Current strong reference count
          */
         [[nodiscard]] constexpr long strong_count() const noexcept {
-            return m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
+            return m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
         }
 
         /**
          * @brief Reset the SharedPtr to empty state
          */
-        constexpr void reset() noexcept {
-            std::println("SharedPtr::reset()");
-            SharedPtr().swap(*this);
-        }
+        constexpr void reset() noexcept { SharedPtr().swap(*this); }
 
         /**
          * @brief Reset the SharedPtr to manage a new object
@@ -670,7 +672,6 @@ namespace sp {
          */
         template<typename U = T>
         constexpr void reset(U* ptr = nullptr) {
-            std::println("SharedPtr::reset(U*)");
             SharedPtr(ptr).swap(*this);
         }
 
@@ -679,7 +680,6 @@ namespace sp {
          * @param other SharedPtr to swap with
          */
         constexpr void swap(SharedPtr& other) noexcept {
-            std::println("SharedPtr::swap()");
             std::swap(m_ptr, other.m_ptr);
             std::swap(m_ctl, other.m_ctl);
         }
@@ -695,7 +695,6 @@ namespace sp {
          */
         constexpr SharedPtr(T* ptr, detail::IControlBlockBase* ctl) noexcept :
             m_ptr(ptr), m_ctl(ctl) {
-            std::println("SharedPtr private constructor");
             detail::incr_strong_ref(m_ctl);
         }
 
@@ -753,28 +752,29 @@ namespace sp {
         explicit SharedPtr(U* ptr, Deleter d = {}, Alloc alloc = {})
             requires std::same_as<U, element_type>
         {
-            std::println("\nSharedPtr<T[]>(ptr, deleter, allocator) constructor:");
-            std::println("  - raw ptr: {}", static_cast<void*>(ptr));
-            std::println("  - deleter type: {}", typeid(Deleter).name());
+            SP_LOG("\nSharedPtr<T[]>(ptr, deleter, allocator) constructor:");
+            SP_LOG("  - raw ptr: {}", static_cast<void*>(ptr));
+            SP_LOG("  - deleter type: {}", typeid(Deleter).name());
 
             if (ptr) {
                 m_ctl = detail::create_ctl_block_array<element_type>(
                     ptr, std::move(d), std::move(alloc));
 
                 m_ptr = ptr;
-                std::println("  - SharedPtr<T[]> initialized:");
-                std::println("    - stored ptr: {}", static_cast<void*>(m_ptr));
-                std::println("    - control block: {}", static_cast<void*>(m_ctl));
+                SP_LOG("  - SharedPtr<T[]> initialized:");
+                SP_LOG("    - stored ptr: {}", static_cast<void*>(m_ptr));
+                SP_LOG("    - control block: {}", static_cast<void*>(m_ctl));
                 detail::incr_strong_ref(m_ctl);
             }
         }
 
         /// @brief Destructor
         ~SharedPtr() {
-            std::println("~SharedPtr<T[]>() - ptr={}, ctl={}, strongCount={}",
-                         static_cast<void*>(m_ptr),
-                         static_cast<void*>(m_ctl),
-                         m_ctl ? m_ctl->strongCount.load() : 0);
+            SP_LOG("~SharedPtr<T[]>() - ptr={}, ctl={}, strongCnt={}",
+                   static_cast<void*>(m_ptr),
+                   static_cast<void*>(m_ctl),
+                   m_ctl ? m_ctl->strongCnt.load() : 0);
+
             detail::release_shared_ref(m_ctl);
         }
 
@@ -784,7 +784,6 @@ namespace sp {
          */
         constexpr SharedPtr(const SharedPtr& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("SharedPtr<T[]> copy constructor");
             detail::incr_strong_ref(m_ctl);
         }
 
@@ -794,7 +793,6 @@ namespace sp {
          */
         constexpr SharedPtr(SharedPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-            std::println("SharedPtr<T[]> move constructor");
         }
 
         /**
@@ -803,7 +801,6 @@ namespace sp {
          * @return Reference to this SharedPtr
          */
         constexpr SharedPtr& operator=(const SharedPtr& other) noexcept {
-            std::println("SharedPtr<T[]> copy assignment");
             SharedPtr(other).swap(*this);
             return *this;
         }
@@ -814,7 +811,6 @@ namespace sp {
          * @return Reference to this SharedPtr
          */
         constexpr SharedPtr& operator=(SharedPtr&& other) noexcept {
-            std::println("SharedPtr<T[]> move assignment");
             SharedPtr(std::move(other)).swap(*this);
             return *this;
         }
@@ -822,10 +818,7 @@ namespace sp {
         /**
          * @brief Reset the SharedPtr to empty state
          */
-        constexpr void reset() noexcept {
-            std::println("SharedPtr<T[]>::reset()");
-            SharedPtr().swap(*this);
-        }
+        constexpr void reset() noexcept { SharedPtr().swap(*this); }
 
         /**
          * @brief Reset the SharedPtr to manage a new array
@@ -836,7 +829,6 @@ namespace sp {
         constexpr void reset(U* ptr = nullptr)
             requires std::same_as<U, element_type>
         {
-            std::println("SharedPtr<T[]>::reset(U*)");
             SharedPtr(ptr).swap(*this);
         }
 
@@ -845,7 +837,7 @@ namespace sp {
          * @param other SharedPtr to swap with
          */
         constexpr void swap(SharedPtr& other) noexcept {
-            std::println("SharedPtr<T[]>::swap()");
+            SP_LOG("SharedPtr<T[]>::swap()");
             std::swap(m_ptr, other.m_ptr);
             std::swap(m_ctl, other.m_ctl);
         }
@@ -867,7 +859,7 @@ namespace sp {
          * @return Current strong reference count
          */
         [[nodiscard]] constexpr long strong_count() const noexcept {
-            return m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
+            return m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
         }
 
         /**
@@ -891,11 +883,9 @@ namespace sp {
          */
         constexpr SharedPtr(element_type* ptr, detail::IControlBlockBase* ctl) noexcept :
             m_ptr(ptr), m_ctl(ctl) {
-            std::println("SharedPtr<T[]> private constructor");
             detail::incr_strong_ref(m_ctl);
         }
 
-        // Friend declarations for make_shared_array implementations
         template<typename U>
         friend constexpr SharedPtr<U[]> detail::make_shared_array_impl(size_t size);
 
@@ -927,7 +917,6 @@ namespace sp {
         constexpr WeakPtr(const SharedPtr<U>& other) noexcept
             requires std::convertible_to<U*, element_type*>
             : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("WeakPtr constructor from SharedPtr");
             detail::incr_weak_ref(m_ctl);
         }
 
@@ -936,7 +925,7 @@ namespace sp {
          * @param other WeakPtr to copy from
          */
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("WeakPtr copy constructor");
+            SP_LOG("WeakPtr copy constructor");
             detail::incr_weak_ref(m_ctl);
         }
 
@@ -946,15 +935,15 @@ namespace sp {
          */
         constexpr WeakPtr(WeakPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-            std::println("WeakPtr move constructor");
         }
 
         /// @brief Destructor
         ~WeakPtr() {
-            std::println("~WeakPtr() - ptr={}, ctl={}, weakCount={}",
-                         static_cast<void*>(m_ptr),
-                         static_cast<void*>(m_ctl),
-                         m_ctl ? m_ctl->weakCount.load() : 0);
+            SP_LOG("~WeakPtr() - ptr={}, ctl={}, weakCnt={}",
+                   static_cast<void*>(m_ptr),
+                   static_cast<void*>(m_ctl),
+                   m_ctl ? m_ctl->weakCnt.load() : 0);
+
             detail::release_weak_ref(m_ctl);
         }
 
@@ -964,7 +953,6 @@ namespace sp {
          * @return Reference to this WeakPtr
          */
         constexpr WeakPtr& operator=(const WeakPtr& other) noexcept {
-            std::println("WeakPtr copy assignment");
             WeakPtr(other).swap(*this);
             return *this;
         }
@@ -975,7 +963,6 @@ namespace sp {
          * @return Reference to this WeakPtr
          */
         constexpr WeakPtr& operator=(WeakPtr&& other) noexcept {
-            std::println("WeakPtr move assignment");
             WeakPtr(std::move(other)).swap(*this);
             return *this;
         }
@@ -985,9 +972,9 @@ namespace sp {
          * @return SharedPtr if object still exists, empty SharedPtr otherwise
          */
         [[nodiscard]] constexpr SharedPtr<T> lock() const noexcept {
-            std::println("WeakPtr::lock() attempt");
+            SP_LOG("WeakPtr::lock() attempt");
             auto result = detail::weak_ptr_lock_impl(m_ptr, m_ctl);
-            std::println("WeakPtr::lock() result - {}", result ? "success" : "failed");
+            SP_LOG("WeakPtr::lock() result - {}", result ? "success" : "failed");
             return result;
         }
 
@@ -996,8 +983,8 @@ namespace sp {
          * @return Current strong reference count
          */
         [[nodiscard]] constexpr long strong_count() const noexcept {
-            auto count = m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
-            std::println("WeakPtr::strong_count() = {}", count);
+            auto count = m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
+            SP_LOG("WeakPtr::strong_count() = {}", count);
             return count;
         }
 
@@ -1007,7 +994,7 @@ namespace sp {
          */
         [[nodiscard]] constexpr bool expired() const noexcept {
             bool exp = strong_count() == 0;
-            std::println("WeakPtr::expired() = {}", exp);
+            SP_LOG("WeakPtr::expired() = {}", exp);
             return exp;
         }
 
@@ -1016,7 +1003,6 @@ namespace sp {
          * @param other WeakPtr to swap with
          */
         constexpr void swap(WeakPtr& other) noexcept {
-            std::println("WeakPtr::swap()");
             std::swap(m_ptr, other.m_ptr);
             std::swap(m_ctl, other.m_ctl);
         }
@@ -1048,7 +1034,7 @@ namespace sp {
          */
         constexpr WeakPtr(const SharedPtr<T[]>& other) noexcept :
             m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("WeakPtr<T[]> constructor from SharedPtr<T[]>");
+            SP_LOG("WeakPtr<T[]> constructor from SharedPtr<T[]>");
             detail::incr_weak_ref(m_ctl);
         }
 
@@ -1057,7 +1043,6 @@ namespace sp {
          * @param other WeakPtr to copy from
          */
         constexpr WeakPtr(const WeakPtr& other) noexcept : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
-            std::println("WeakPtr<T[]> copy constructor");
             detail::incr_weak_ref(m_ctl);
         }
 
@@ -1067,15 +1052,15 @@ namespace sp {
          */
         constexpr WeakPtr(WeakPtr&& other) noexcept :
             m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-            std::println("WeakPtr<T[]> move constructor");
         }
 
         /// @brief Destructor
         ~WeakPtr() {
-            std::println("~WeakPtr<T[]>() - ptr={}, ctl={}, weakCount={}",
-                         static_cast<void*>(m_ptr),
-                         static_cast<void*>(m_ctl),
-                         m_ctl ? m_ctl->weakCount.load() : 0);
+            SP_LOG("~WeakPtr<T[]>() - ptr={}, ctl={}, weakCnt={}",
+                   static_cast<void*>(m_ptr),
+                   static_cast<void*>(m_ctl),
+                   m_ctl ? m_ctl->weakCnt.load() : 0);
+
             detail::release_weak_ref(m_ctl);
         }
 
@@ -1085,7 +1070,6 @@ namespace sp {
          * @return Reference to this WeakPtr
          */
         constexpr WeakPtr& operator=(const WeakPtr& other) noexcept {
-            std::println("WeakPtr<T[]> copy assignment");
             WeakPtr(other).swap(*this);
             return *this;
         }
@@ -1096,7 +1080,6 @@ namespace sp {
          * @return Reference to this WeakPtr
          */
         constexpr WeakPtr& operator=(WeakPtr&& other) noexcept {
-            std::println("WeakPtr<T[]> move assignment");
             WeakPtr(std::move(other)).swap(*this);
             return *this;
         }
@@ -1106,9 +1089,9 @@ namespace sp {
          * @return SharedPtr<T[]> if array still exists, empty SharedPtr otherwise
          */
         [[nodiscard]] constexpr SharedPtr<T[]> lock() const noexcept {
-            std::println("WeakPtr<T[]>::lock() attempt");
+            SP_LOG("WeakPtr<T[]>::lock() attempt");
             auto result = detail::weak_ptr_lock_impl(m_ptr, m_ctl);
-            std::println("WeakPtr<T[]>::lock() result - {}", result ? "success" : "failed");
+            SP_LOG("WeakPtr<T[]>::lock() result - {}", result ? "success" : "failed");
             return result;
         }
 
@@ -1117,8 +1100,8 @@ namespace sp {
          * @return Current strong reference count
          */
         [[nodiscard]] constexpr long strong_count() const noexcept {
-            auto count = m_ctl ? m_ctl->strongCount.load(std::memory_order_acquire) : 0;
-            std::println("WeakPtr<T[]>::strong_count() = {}", count);
+            auto count = m_ctl ? m_ctl->strongCnt.load(std::memory_order_acquire) : 0;
+            SP_LOG("WeakPtr<T[]>::strong_count() = {}", count);
             return count;
         }
 
@@ -1128,7 +1111,7 @@ namespace sp {
          */
         [[nodiscard]] constexpr bool expired() const noexcept {
             bool exp = strong_count() == 0;
-            std::println("WeakPtr<T[]>::expired() = {}", exp);
+            SP_LOG("WeakPtr<T[]>::expired() = {}", exp);
             return exp;
         }
 
@@ -1137,7 +1120,6 @@ namespace sp {
          * @param other WeakPtr to swap with
          */
         constexpr void swap(WeakPtr& other) noexcept {
-            std::println("WeakPtr<T[]>::swap()");
             std::swap(m_ptr, other.m_ptr);
             std::swap(m_ctl, other.m_ctl);
         }
