@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <format>
 #include <functional>
@@ -45,19 +46,22 @@ namespace testing {
 
         template<size_t N>
         struct FixedString {
-            char chars[N]{};
-            consteval FixedString(const char (&str)[N]) { std::copy_n(str, N, chars); }
-            constexpr operator std::string_view() const { return {chars, N - 1}; }
-            [[nodiscard]] constexpr std::string_view view() const { return {chars, N - 1}; }
+            std::array<char, N> chars{};
+            consteval FixedString(const char (&str)[N]) { std::copy_n(str, N, chars.data()); }
+            constexpr operator std::string_view() const { return {chars.data(), N - 1}; }
+            [[nodiscard]] constexpr std::string_view view() const { return {chars.data(), N - 1}; }
         };
     }  // namespace detail
 
     [[noreturn]] inline void fail(std::string_view message, const std::source_location& loc =
                                                                 std::source_location::current()) {
-        std::println("\n\033[31mAssertion failed!\033[0m");
-        std::println("  Location: {}:{}", loc.file_name(), loc.line());
-        std::println("  Function: {}", loc.function_name());
-        std::println("  Message : {}", message);
+        std::println(
+            "\n\033[31mAssertion failed!\033[0m\n  Location: {}:{}\n  Function: {}\n  Message : {}",
+            loc.file_name(),
+            loc.line(),
+            loc.function_name(),
+            message);
+
         std::terminate();
     }
 

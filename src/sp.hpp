@@ -74,7 +74,7 @@ namespace sp {
             template<typename... Args>
             constexpr explicit ControlBlockDirect(Deleter d, Alloc alloc, Args&&... args) :
                 m_deleter(std::move(d)), m_alloc(std::move(alloc)) {
-                ::new (static_cast<void*>(ptr())) T(std::forward<Args>(args)...);
+                std::construct_at(ptr(), std::forward<Args>(args)...);
             }
 
             ~ControlBlockDirect() = default;
@@ -522,7 +522,6 @@ namespace sp {
         template<class A, class U>
         concept AllocatorFor =
             requires(A a) { typename std::allocator_traits<A>::template rebind_alloc<U>; };
-
     }  // namespace detail
 
     template<typename T, bool IsArray>
