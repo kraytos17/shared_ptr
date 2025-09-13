@@ -72,8 +72,8 @@ namespace sp {
              * @param args Arguments to forward to T's constructor
              */
             template<typename... Args>
-            constexpr explicit ControlBlockDirect(Deleter d, Alloc alloc, Args&&... args) :
-                m_deleter(std::move(d)), m_alloc(std::move(alloc)) {
+            constexpr explicit ControlBlockDirect(Deleter d, Alloc alloc, Args&&... args)
+              : m_deleter(std::move(d)), m_alloc(std::move(alloc)) {
                 std::construct_at(ptr(), std::forward<Args>(args)...);
             }
 
@@ -153,8 +153,8 @@ namespace sp {
              * @param d Deleter to use
              * @param alloc Allocator to use
              */
-            constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
-                m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
+            constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc)
+              : m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
 
             /**
              * @brief Destroy the managed object
@@ -220,8 +220,8 @@ namespace sp {
              * @param d Deleter to use
              * @param alloc Allocator to use
              */
-            constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc) :
-                m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
+            constexpr explicit ControlBlockPtr(T* ptr, Deleter d, Alloc alloc)
+              : m_ptr(ptr), m_deleter(std::move(d)), m_alloc(std::move(alloc)) {}
 
             /**
              * @brief Destroy the managed array
@@ -534,14 +534,14 @@ namespace sp {
 
         ~SharedPtrBase() { detail::release_shared_ref(m_ctl); }
 
-        constexpr SharedPtrBase(const SharedPtrBase& other) noexcept :
-            m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
+        constexpr SharedPtrBase(const SharedPtrBase& other) noexcept
+          : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             detail::incr_strong_ref(m_ctl);
         }
 
-        constexpr SharedPtrBase(SharedPtrBase&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-        }
+        constexpr SharedPtrBase(SharedPtrBase&& other) noexcept
+          : m_ptr(std::exchange(other.m_ptr, nullptr)),
+            m_ctl(std::exchange(other.m_ctl, nullptr)) {}
 
         SharedPtrBase& operator=(const SharedPtrBase& other) noexcept {
             SharedPtrBase(other).swap(*this);
@@ -583,8 +583,8 @@ namespace sp {
             U* ptr, detail::IControlBlockBase* ctl) noexcept;
 
     protected:
-        constexpr SharedPtrBase(element_type* p, detail::IControlBlockBase* c) noexcept :
-            m_ptr(p), m_ctl(c) {
+        constexpr SharedPtrBase(element_type* p, detail::IControlBlockBase* c) noexcept
+          : m_ptr(p), m_ctl(c) {
             detail::incr_strong_ref(m_ctl);
         }
 
@@ -608,8 +608,8 @@ namespace sp {
         /// @brief Construct from raw pointer
         template<typename U>
             requires detail::ConvertibleToPtr<U*, element_type*> && detail::NotArray<U>
-        explicit SharedPtr(U* ptr) :
-            SharedPtr(ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
+        explicit SharedPtr(U* ptr)
+          : SharedPtr(ptr, std::default_delete<U>{}, std::allocator<U>{}) {}
 
         /// @brief Construct from raw pointer with deleter
         template<typename U, typename Deleter>
@@ -744,14 +744,14 @@ namespace sp {
 
         ~WeakPtrBase() { detail::release_weak_ref(m_ctl); }
 
-        constexpr WeakPtrBase(const WeakPtrBase& other) noexcept :
-            m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
+        constexpr WeakPtrBase(const WeakPtrBase& other) noexcept
+          : m_ptr(other.m_ptr), m_ctl(other.m_ctl) {
             detail::incr_weak_ref(m_ctl);
         }
 
-        constexpr WeakPtrBase(WeakPtrBase&& other) noexcept :
-            m_ptr(std::exchange(other.m_ptr, nullptr)), m_ctl(std::exchange(other.m_ctl, nullptr)) {
-        }
+        constexpr WeakPtrBase(WeakPtrBase&& other) noexcept
+          : m_ptr(std::exchange(other.m_ptr, nullptr)),
+            m_ctl(std::exchange(other.m_ctl, nullptr)) {}
 
         WeakPtrBase& operator=(const WeakPtrBase& other) noexcept {
             WeakPtrBase(other).swap(*this);
@@ -809,7 +809,7 @@ namespace sp {
         template<typename U>
         constexpr WeakPtr(const SharedPtr<U>& other) noexcept
             requires detail::ConvertibleToPtr<U*, element_type*>
-            : Base(other) {}
+          : Base(other) {}
     };
 
     /**
