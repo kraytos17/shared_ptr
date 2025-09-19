@@ -148,7 +148,3 @@ int main() {
 - Requires C++20. Optional `<print>` usage is guarded by `SP_DEBUG`.
 - No aliasing constructors and no `enable_shared_from_this` integration.
 - When constructing from raw pointers, ensure the deleter/allocator match how the object/array was created.
-
-## License
-
-MIT
