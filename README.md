@@ -151,4 +151,4 @@ int main() {
 
 ## License
 
-MIT (or your chosen license).
+MIT
