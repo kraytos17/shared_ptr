@@ -93,11 +93,13 @@ namespace testing {
     void assert_eq(Lhs&& lhs, Rhs&& rhs,
                    const std::source_location& loc = std::source_location::current()) {
         if (!(lhs == rhs)) {
+            // clang-format off
             fail(std::format("Assertion failed: {}\n  Values: {} != {}",
                              Message.view(),
                              detail::format_value(std::forward<Lhs>(lhs)),
                              detail::format_value(std::forward<Rhs>(rhs))),
-                 loc);
+                             loc);
+            // clang-format on
         }
     }
 

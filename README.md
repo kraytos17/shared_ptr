@@ -1,137 +1,154 @@
-# sp - A Custom Shared Pointer Implementation in C++
+# sp — Custom Shared/Weak Pointer (Header-only, C++20)
 
-This code implements a custom smart pointer library in C++ with `SharedPtr` and `WeakPtr` classes, similar to `std::shared_ptr` and `std::weak_ptr` from the C++ Standard Library, but with additional features and debug output.
+This is a lightweight, header-only smart pointer library that provides `sp::SharedPtr` and `sp::WeakPtr` for both single objects and arrays. It mirrors the core behavior of `std::shared_ptr/std::weak_ptr`, adds array support, custom deleters/allocators, optional debug logs, and uses a compact control-block design with thread-safe reference counting.
 
-## Overview
+- Header: src/sp.hpp
+- Minimum standard: C++20 (optional logging uses <print> from C++23, guarded by a macro)
 
-The code defines a namespace `sp` containing a custom implementation of shared and weak pointers (`SharedPtr` and `WeakPtr`) with support for:
+## Features
 
-- Shared ownership of dynamically allocated objects via reference counting
-- Weak references to avoid cyclic dependencies
-- Custom deleters and allocators for flexible memory management
-- Array support with specialized handling for array types (e.g., `SharedPtr<T[]>`)
-- Thread-safe reference counting using `std::atomic_long`
-- Extensive debug logging via `std::println` to track object lifetime, reference counts, and memory operations
+- Shared ownership with atomic reference counting
+- Weak references with lock() semantics
+- Single-object and array specializations: `SharedPtr<T>` and `SharedPtr<T[]>`
+- Custom deleters and allocators from raw pointers
+- Efficient make_shared for single objects (in-place storage, one allocation)
+- Optional debug logging via `SP_DEBUG`
+- Introspect stored deleter/allocator via `ptr.deleter<Deleter>()`
 
-The implementation uses a control block (`IControlBlockBase` and its derivatives) to manage the reference counts and resource cleanup.
+## Design
 
-## Key Components
+- Control blocks (in `sp::detail`)
+  - `IControlBlockBase`: holds `strongCnt`, `weakCnt`, and virtual hooks:
+    - `destroy_object()`, `destroy_block()`, `deleter(const std::type_info&)`
+  - `ControlBlockDirect<T, Deleter, Alloc>`: in-place object storage (used by make_shared/allocated_shared)
+  - `ControlBlockPtr<T, Deleter, Alloc>`: manages pre-allocated single objects
+  - `ControlBlockPtr<T[], Deleter, Alloc>`: manages pre-allocated arrays
+- Refcount ops:
+  - `incr_strong_ref`, `incr_weak_ref`
+  - `release_shared_ref` (destroys object at 0 and block if no weaks)
+  - `release_weak_ref` (destroys block when both counts reach 0)
+- Weak lock:
+  - `weak_ptr_lock_impl` uses CAS on `strongCnt` for safe promotion
 
-### 1. Namespace and Tags
+Thread-safety: counts use `std::atomic_size_t` and appropriate memory orders.
 
-- **Namespace**: `sp` encapsulates the entire library
-- **Constructor Tags**: `from_raw_ptr`, `from_raw_ptr_with_deleter`, `from_raw_ptr_with_deleter_alloc`, and `with_defaults` are used to disambiguate constructor overloads when creating `SharedPtr` from raw pointers
+## API Overview
 
-### 2. Control Blocks (in `detail` namespace)
+Types
+- `sp::SharedPtr<T>`: single object
+- `sp::SharedPtr<T[]>`: arrays
+- `sp::WeakPtr<T>`, `sp::WeakPtr<T[]>`
 
-The control blocks manage the lifetime of the pointed-to object and the reference counts:
+Construction (single object)
+- `SharedPtr<T>()`, `SharedPtr<T>(std::nullptr_t)`
+- From raw pointer:
+  - `SharedPtr<T>(U* p)` where `U*` convertible to `T*`
+  - `SharedPtr<T>(U* p, Deleter d)`
+  - `SharedPtr<T>(U* p, Deleter d, Alloc alloc)`
+- Cross-type copy/move when pointer types are convertible
 
-- **`IControlBlockBase`**: Abstract base class with:
+Construction (arrays)
+- `SharedPtr<T[]>(U* p, Deleter d = {}, Alloc alloc = {})` where `U` is exactly `T`
 
-  - `strongCount`: Atomic counter for shared references
-  - `weakCount`: Atomic counter for weak references
-  - Virtual methods: `destroyObject()` (deletes the managed object), `destroyBlock()` (deallocates the control block), and `deleter()` (accesses the deleter)
+Observers
+- `T* get() const`, `operator bool()`
+- `size_t strong_count() const`
+- `*` and `->` on `SharedPtr<T>`
+- `operator[](ptrdiff_t)` on `SharedPtr<T[]>`
+- `template<class D> D* deleter() const` to access stored deleter/allocator (if present)
 
-- **`ControlBlockDirect`**: Used for objects constructed in-place (e.g., via `makeShared`)
+Modifiers
+- `reset()` / `reset(newPtr)` (array overload for `SharedPtr<T[]>`)
+- `swap(SharedPtr&)`
 
-  - Stores the object inline in `m_storage` using placement new
-  - Supports custom deleters and allocators
+Weak pointers
+- `WeakPtr<T>`/`WeakPtr<T[]>` constructible from `SharedPtr`
+- `lock() -> SharedPtr<T>`; `expired()`
+- `strong_count()`, `weak_count()`
+- `reset()`, `swap()`
 
-- **`ControlBlockPtr`**: Used for managing pre-allocated raw pointers
+Factory functions
+- `make_shared<T>(Args&&... args)`
+- `allocated_shared<T>(const Alloc& alloc, Args&&... args)`   // note: name is allocated_shared
+- `make_shared_array<T>(size_t size)`
+- `allocate_shared_array<T>(const Alloc& alloc, size_t size)`
 
-  - Stores a pointer to the object (`m_ptr`) and handles cleanup with a custom deleter
-  - Specialized for arrays (`T[]`) with a separate implementation
+## Debug Logging
 
-- **Reference Counting Helpers**:
-  - `incrementStrongRef`/`incrementWeakRef`: Atomically increment the respective counters
-  - `releaseSharedRef`: Decrements `strongCount`; if it reaches 0, destroys the object and potentially the block
-  - `releaseWeakRef`: Decrements `weakCount`; if both counts are 0, destroys the block
+Define `SP_DEBUG` before including `sp.hpp` to enable logging:
+- Macro: `SP_LOG(...)` -> `std::println(...)`
+- Disabled by default (no overhead when off)
 
-### 3. SharedPtr<T> (Non-Array Version)
-
-Manages shared ownership of a single object of type `T`.
-
-**Key Features**:
-
-- **Constructors**: Default, from raw pointers (with optional deleter/allocator), copy, and move
-- **Operators**: Dereference (`*`, `->`), boolean conversion, assignment
-- **Methods**: `get()` (raw pointer access), `strongCount()` (reference count), `reset()` (releases ownership), `swap()`
-- Thread-safe reference counting via `detail::incrementStrongRef` and `detail::releaseSharedRef`
-- **Debugging**: Logs construction, destruction, and reference count changes
-
-### 4. SharedPtr<T[]> (Array Version)
-
-Specialized for arrays (`T[]`).
-
-**Key Differences**:
-
-- Disables `*` and `->` operators (not meaningful for arrays)
-- Adds `operator[]` for array indexing
-- Supports custom deleters and allocators for array cleanup
-- **Construction**: Similar to the non-array version but tailored for arrays
-
-### 5. WeakPtr<T> and WeakPtr<T[]>
-
-Provides non-owning references to objects managed by `SharedPtr`.
-
-**Key Features**:
-
-- Constructed from `SharedPtr` or another `WeakPtr`
-- `lock()`: Attempts to create a `SharedPtr` if the object is still alive
-- `expired()`: Checks if the object has been destroyed (`strongCount == 0`)
-- `strongCount()`: Queries the current strong reference count
-- **Debugging**: Logs weak reference operations
-
-### 6. Factory Functions
-
-- `makeShared<T>(Args&&... args)`: Constructs an object of type `T` in-place and returns a `SharedPtr`
-- `allocateShared<T>(Alloc, Args&&... args)`: Similar, but with a custom allocator
-- `makeSharedArray<T>(size_t size)`: Creates an array of `T` with default-constructed elements
-- `allocateSharedArray<T>(Alloc, size_t size)`: Array version with a custom allocator
-
-## Design Highlights
-
-### Memory Management
-
-- Uses control blocks to separate object lifetime from pointer management
-- Supports in-place construction (`ControlBlockDirect`) and raw pointer management (`ControlBlockPtr`)
-
-### Thread Safety
-
-- Reference counts are managed with `std::atomic_long` and appropriate memory orders (`acq_rel`, `release`)
-- `weakPtrLockImpl` uses `compare_exchange_weak` for safe locking
-
-### Flexibility
-
-- Custom deleters and allocators allow fine-grained control over resource cleanup
-- Array specialization ensures proper handling of array types
-
-### Debugging
-
-- Extensive use of `std::println` for tracing pointer operations, useful for debugging memory issues
-
-## Usage Example
-
+Example:
 ```cpp
-#include "sp.hpp"
+#define SP_DEBUG 1
+#include "src/sp.hpp"
+```
+
+## Usage Examples
+
+Single object and weak pointer
+```cpp
+#include "src/sp.hpp"
+#include <cassert>
 
 int main() {
-    // Single object
-    auto sp1 = sp::makeShared<int>(42);
-    std::println("Value: {}", *sp1); // Logs construction and value
+    auto sp1 = sp::make_shared<int>(42);
+    assert(*sp1 == 42);
 
-    // Weak pointer
-    sp::WeakPtr<int> wp1 = sp1;
-    auto sp2 = wp1.lock(); // Creates another shared pointer if alive
-
-    // Array
-    auto sp3 = sp::makeSharedArray<int>(5);
-    sp3[0] = 10; // Access array elements
-
-    // Custom deleter
-    auto deleter = [](int* p) { std::println("Deleting {}", *p); delete p; };
-    auto sp4 = sp::SharedPtr<int>(sp::from_raw_ptr_with_deleter, new int(99), deleter);
-
-    return 0;
+    sp::WeakPtr<int> wp = sp1;
+    auto sp2 = wp.lock();
+    assert(sp2 && sp2.get() == sp1.get());
 }
 ```
+
+Raw pointer + custom deleter
+```cpp
+#include "src/sp.hpp"
+#include <cstdio>
+
+struct FileCloser {
+    void operator()(std::FILE* f) const noexcept { if (f) std::fclose(f); }
+};
+
+int main() {
+    std::FILE* f = std::fopen("data.txt", "w");
+    sp::SharedPtr<std::FILE> fp(f, FileCloser{});
+    // use fp.get()
+}
+```
+
+Arrays
+```cpp
+#include "src/sp.hpp"
+#include <cstddef>
+
+int main() {
+    auto arr = sp::make_shared_array<int>(5);
+    for (std::size_t i = 0; i < 5; ++i) arr[i] = static_cast<int>(i);
+}
+```
+
+Custom allocator with in-place object
+```cpp
+#include "src/sp.hpp"
+#include <memory>
+
+struct Foo { int x; Foo(int v): x(v) {} };
+
+int main() {
+    std::allocator<Foo> alloc;
+    auto spf = sp::allocated_shared<Foo>(alloc, 7);
+}
+```
+
+## Notes and Limitations
+
+- Header-only; include `src/sp.hpp` in your project.
+- Requires C++20. Optional `<print>` usage is guarded by `SP_DEBUG`.
+- No aliasing constructors and no `enable_shared_from_this` integration.
+- When constructing from raw pointers, ensure the deleter/allocator match how the object/array was created.
+
+## License
+
+MIT (or your chosen license).
