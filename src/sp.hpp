@@ -335,7 +335,8 @@ namespace sp {
         }
 
         template<typename T, typename U, typename Deleter, typename Alloc>
-        constexpr IControlBlockBase* create_ctl_block_array(U* ptr, Deleter&& d, Alloc&& alloc) {
+        constexpr IControlBlockBase* create_ctl_block_array(U* ptr, Deleter&& d, Alloc&& alloc,
+                                                            bool make_shared_path = false) {
             if (!ptr) {
                 return nullptr;
             }
@@ -351,6 +352,9 @@ namespace sp {
 
             try {
                 std::construct_at(block, ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc));
+                block->strongCnt.store(1, std::memory_order_relaxed);
+                block->weakCnt.store(make_shared_path ? 1 : 0, std::memory_order_relaxed);
+                std::atomic_thread_fence(std::memory_order_release);
                 return block;
             } catch (...) {
                 blockAlloc.deallocate(block, 1);
@@ -359,7 +363,8 @@ namespace sp {
         }
 
         template<typename T, typename U, typename Deleter, typename Alloc>
-        constexpr IControlBlockBase* create_ctl_block_single(U* ptr, Deleter&& d, Alloc&& alloc) {
+        constexpr IControlBlockBase* create_ctl_block_single(U* ptr, Deleter&& d, Alloc&& alloc,
+                                                             bool make_shared_path = false) {
             if (!ptr) {
                 return nullptr;
             }
@@ -375,6 +380,9 @@ namespace sp {
 
             try {
                 std::construct_at(block, ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc));
+                block->strongCnt.store(1, std::memory_order_release);
+                block->weakCnt.store(make_shared_path ? 1 : 0, std::memory_order_relaxed);
+                std::atomic_thread_fence(std::memory_order_release);
                 return block;
             } catch (...) {
                 blockAlloc.deallocate(block, 1);
@@ -390,22 +398,21 @@ namespace sp {
          * @return SharedPtr<T> if object still exists, empty SharedPtr otherwise
          */
         template<typename T>
-        constexpr SharedPtr<T> weak_ptr_lock_impl(T* ptr, IControlBlockBase* ctl) noexcept {
-            SharedPtr<T> result;
-            if (ctl) {
-                auto count = ctl->strongCnt.load(std::memory_order_acquire);
-                while (count != 0) {
-                    if (ctl->strongCnt.compare_exchange_weak(count,
-                                                             count + 1,
-                                                             std::memory_order_acq_rel,
-                                                             std::memory_order_relaxed)) {
-                        result.m_ptr = ptr;
-                        result.m_ctl = ctl;
-                        break;
-                    }
-                }
+        [[nodiscard]] constexpr SharedPtr<T> weak_ptr_lock_impl(T* ptr,
+                                                                IControlBlockBase* ctl) noexcept {
+            if (!ctl || ctl->strongCnt.load(std::memory_order_acquire) == 0) {
+                return {};
             }
-            return result;
+
+            size_t old = ctl->strongCnt.load(std::memory_order_relaxed);
+            do {
+                if (old == 0) {
+                    return {};
+                }
+            } while (!ctl->strongCnt.compare_exchange_weak(
+                old, old + 1, std::memory_order_acq_rel, std::memory_order_relaxed));
+
+            return SharedPtr<T>(ptr, ctl);
         }
 
         /**
@@ -444,9 +451,19 @@ namespace sp {
 
             BlockAlloc blockAlloc(alloc);
             auto* block = std::allocator_traits<BlockAlloc>::allocate(blockAlloc, 1);
-            std::construct_at(block, std::default_delete<T>{}, alloc, std::forward<Args>(args)...);
+            try {
+                std::construct_at(
+                    block, std::default_delete<T>{}, alloc, std::forward<Args>(args)...);
 
-            return SharedPtr<T>(block->ptr(), block);
+                block->strongCnt.store(1, std::memory_order_relaxed);
+                block->weakCnt.store(1, std::memory_order_relaxed);
+                std::atomic_thread_fence(std::memory_order_release);
+                return SharedPtr<T>(
+                    block->ptr(), block, typename SharedPtr<T>::already_counted_t{});
+            } catch (...) {
+                std::allocator_traits<BlockAlloc>::deallocate(blockAlloc, block, 1);
+                throw;
+            }
         }
 
         /**
@@ -488,8 +505,8 @@ namespace sp {
                 constructed = size;
                 Deleter deleter{elementAlloc, size};
 
-                auto* block = detail::create_ctl_block_array<T>(ptr, deleter, alloc);
-                return SharedPtr<T[]>(ptr, block);
+                auto* block = detail::create_ctl_block_array<T>(ptr, deleter, alloc, true);
+                return SharedPtr<T[]>(ptr, block, typename SharedPtr<T[]>::already_counted_t{});
             } catch (...) {
                 std::destroy_n(ptr, constructed);
                 std::allocator_traits<ElementAlloc>::deallocate(elementAlloc, ptr, size);
@@ -547,6 +564,7 @@ namespace sp {
             SharedPtrBase(other).swap(*this);
             return *this;
         }
+
         SharedPtrBase& operator=(SharedPtrBase&& other) noexcept {
             SharedPtrBase(std::move(other)).swap(*this);
             return *this;
@@ -588,6 +606,11 @@ namespace sp {
             detail::incr_strong_ref(m_ctl);
         }
 
+        struct already_counted_t {};
+        constexpr SharedPtrBase(element_type* p, detail::IControlBlockBase* c,
+                                already_counted_t) noexcept
+          : m_ptr(p), m_ctl(c) {}
+
         element_type* m_ptr{nullptr};
         detail::IControlBlockBase* m_ctl{nullptr};
     };
@@ -600,6 +623,7 @@ namespace sp {
     class SharedPtr : public SharedPtrBase<T, false> {
     private:
         using Base = SharedPtrBase<T, false>;
+        using already_counted_t = Base::already_counted_t;
 
     public:
         using Base::Base;
@@ -620,22 +644,21 @@ namespace sp {
         template<typename U, typename Deleter, typename Alloc>
             requires detail::ConvertibleToPtr<U*, element_type*> &&
                      detail::DeleterFor<Deleter, U> && detail::AllocatorFor<Alloc, U>
-        SharedPtr(U* ptr, Deleter d, Alloc alloc) {
-            this->m_ctl = detail::create_ctl_block_single<T>(ptr, std::move(d), std::move(alloc));
-            this->m_ptr = ptr;
-            detail::incr_strong_ref(this->m_ctl);
-        }
+        SharedPtr(U* ptr, Deleter d, Alloc alloc)
+          : Base(ptr,
+                 ptr ? detail::create_ctl_block_single<T>(ptr, std::forward<Deleter>(d),
+                                                          std::forward<Alloc>(alloc), false)
+                     : nullptr,
+                 already_counted_t{}) {}
 
         template<typename U>
-            requires detail::ConvertibleToPtr<U, element_type> && detail::NotArray<U>
+            requires detail::ConvertibleToPtr<U*, element_type*> && detail::NotArray<U>
         SharedPtr(const SharedPtr<U>& other) noexcept : Base(other.get_ptr(), other.get_ctl()) {}
 
         template<typename U>
-            requires detail::ConvertibleToPtr<U, element_type> && detail::NotArray<U>
-        SharedPtr(SharedPtr<U>&& other) noexcept : Base(other.get_ptr(), other.get_ctl()) {
-            other.m_ptr = nullptr;
-            other.m_ctl = nullptr;
-        }
+            requires detail::ConvertibleToPtr<U*, element_type*> && detail::NotArray<U>
+        SharedPtr(SharedPtr<U>&& other) noexcept
+          : Base(std::exchange(other.m_ptr, nullptr), std::exchange(other.m_ctl, nullptr)) {}
 
         /**
          * @brief Dereference operator
@@ -659,6 +682,15 @@ namespace sp {
             SharedPtr(ptr).swap(*this);
         }
 
+        template<typename U>
+        [[nodiscard]] constexpr bool owner_before(const WeakPtr<U>& other) const noexcept {
+            return this->m_ctl < other.m_ctl;
+        }
+        template<typename U>
+        [[nodiscard]] constexpr bool owner_before(const SharedPtr<U>& other) const noexcept {
+            return this->m_ctl < other.m_ctl;
+        }
+
     private:
         template<typename U, typename... Args>
         friend constexpr SharedPtr<U> detail::make_shared_impl(Args&&... args);
@@ -675,6 +707,7 @@ namespace sp {
     class SharedPtr<T[]> : public SharedPtrBase<T[], true> {
     private:
         using Base = SharedPtrBase<T[], true>;
+        using already_counted_t = typename Base::already_counted_t;
 
     public:
         using Base::Base;
@@ -701,17 +734,22 @@ namespace sp {
          */
         template<typename U, typename Deleter = std::default_delete<U[]>,
                  typename Alloc = std::allocator<U>>
-        explicit SharedPtr(U* ptr, Deleter d = {}, Alloc alloc = {})
             requires std::same_as<U, element_type>
-        {
-            if (ptr) {
-                this->m_ctl = detail::create_ctl_block_array<element_type>(
-                    ptr, std::move(d), std::move(alloc));
+        explicit SharedPtr(U* ptr, Deleter d = {}, Alloc alloc = {})
+          : Base(ptr,
+                 ptr ? detail::create_ctl_block_array<element_type>(
+                           ptr, std::forward<Deleter>(d), std::forward<Alloc>(alloc), false)
+                     : nullptr,
+                 already_counted_t{}) {}
 
-                this->m_ptr = ptr;
-                detail::incr_strong_ref(this->m_ctl);
-            }
-        }
+        template<typename U>
+            requires std::convertible_to<U (*)[], element_type (*)[]>
+        SharedPtr(const SharedPtr<U[]>& other) noexcept : Base(other.get(), other.get_ctl()) {}
+
+        template<typename U>
+            requires std::convertible_to<U (*)[], element_type (*)[]>
+        SharedPtr(SharedPtr<U[]>&& other) noexcept
+          : Base(std::exchange(other.m_ptr, nullptr), std::exchange(other.m_ctl, nullptr)) {}
 
         /**
          * @brief Reset the SharedPtr to manage a new array
@@ -723,6 +761,15 @@ namespace sp {
             requires std::same_as<U, element_type>
         {
             SharedPtr(ptr).swap(*this);
+        }
+
+        template<typename U>
+        [[nodiscard]] constexpr bool owner_before(const WeakPtr<U>& other) const noexcept {
+            return this->m_ctl < other.m_ctl;
+        }
+        template<typename U>
+        [[nodiscard]] constexpr bool owner_before(const SharedPtr<U>& other) const noexcept {
+            return this->m_ctl < other.m_ctl;
         }
 
     private:
@@ -829,8 +876,7 @@ namespace sp {
 
         element_type& operator*() const = delete;
         element_type* operator->() const = delete;
-
-        constexpr element_type& operator[](ptrdiff_t idx) const { return this->m_ptr[idx]; }
+        element_type& operator[](ptrdiff_t idx) const = delete;
     };
 
     /**
